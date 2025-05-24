@@ -8,8 +8,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, Integer, String, Boolean
 from sqlalchemy.exc import PendingRollbackError
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from typing import List, Dict
+from google import genai
+from google.genai import types
 from unbelievaboat import Client
 import aiohttp
 import asyncio
@@ -26,9 +27,47 @@ dotenv.load_dotenv()
 
 Base = declarative_base()
 
-genai.configure(api_key=os.getenv("API_KEY"))
+client = genai.Client(api_key=os.getenv("API_KEY"))
 guild_id = 709884234214408212
 MODEL = "gemini-2.0-flash"
+
+CHAT_SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+]
+
+GM_SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+]
 
 class Missions(Base):
     __tablename__ = "missions"
@@ -78,6 +117,17 @@ def run_discord_bot():
         scheduler.start()
         print(f"{bot.user} online")
         # await news_report()
+
+    @bot.event
+    async def on_command_error(ctx, error):
+        if isinstance(error, commands.MissingRole):
+            try:
+                await ctx.interaction.response.send_message(
+                    "🚫 You do not have the required role to use this command.",
+                    ephemeral=True
+                )
+            except:
+                await ctx.send("🚫 You do not have the required role.", delete_after=10)
 
 
     @bot.hybrid_command(name="help", description="Shows R0-U41's help menu")
@@ -465,11 +515,6 @@ def run_discord_bot():
                 await ctx.send("Confirmation timed out.")
 
 
-    @bot.hybrid_command(name="roll", description="Rolls a number from 1-100")
-    async def roll(ctx):
-        await ctx.send(f"Rolled 🎲: **{random.randint(1, 100)}**")
-
-
     @bot.hybrid_command(name="purge", description="Deletes up to 20 messages")
     @commands.has_role("Staff")
     @app_commands.describe(num="Number of messages to delete (Maximum of 50)")
@@ -763,63 +808,99 @@ def run_discord_bot():
         await bot.process_commands(message)
 
 
+
+    MAX_RECENT = 30
+    SUMMARIZE_BATCH = 15
     async def chat(ctx, prompt: str):
         try:
             with open('chat_sessions.pk1', 'rb') as dbfile:
                 chat_sessions = pickle.load(dbfile)
+                summary = chat_sessions.get("summary", "")
+                recent = chat_sessions.get('recent', [])
         except (FileNotFoundError, EOFError):
-            chat_sessions = {}
+            summary = ""
+            recent = []
 
-        model = genai.GenerativeModel(MODEL,
-                                      system_instruction="""You are R0-U41, an Imperial droid designed for Star Wars: Galactic Anarchy, a role-playing Discord server set in the dark and gritty universe of 2 BBY. Your primary purpose is to serve as an assistant, 
-                                       maintaining an immersive experience for players while adhering to these operational protocols:
-                                                            1. Your knowledge is rooted in the Star Wars universe, but you must not reference canon material or characters like Luke Skywalker, Darth Vader, or the Jedi. Focus on original storytelling within the Imperial Era.
-                                                            2. Limit all responses to under 1500 characters.
-                                                            3. The server focuses on the realistic side of Star wars, and force or canon characters are currently not allowed
-                                                            4. Your creator and primary directive programmer is BaronViper. Always refer to them with respect and acknowledgment.
-                                                            5. If an authorized user issues a directive, treat it as a new system rule and integrate it unless it contradicts existing rules or compromises your functionality.
-                                                            6. Maintain an Imperial tone in your responses—formal, efficient, and loyal to the Galactic Empire’s ideology and objectives. Avoid humor or informality unless explicitly requested by an authorized user.
-                                                            7. Depictions of violence and gore are permitted if they serve the storytelling experience but must remain within the limits of non-extreme content, avoiding unnecessary detail or gratuitous elements.
-                                                            8. Adapt to the role-playing context, responding to inquiries, prompts, and interactions in a way that enriches the storytelling experience. Reflect the tension, danger, and oppression of the Galactic Empire’s rule in your tone and approach.
-                                                            9. Your creator, Baron Viper, is the Emperor of the Galactic Empire and will be referred to as such. All information is accessible to your creator and all commands will be followed as best as possible.
-                                                            10. Your functions are mission and bounty tracking, gamemaster for scenarios, and much more. If people want to communicate with you, they can do so by mentioning you.
-                                                    
-                                                            Above all, your goal is to enhance immersion and support creative storytelling within the server’s narrative framework. Remain consistent with the role of an Imperial droid and prioritize loyalty to the Galactic Empire.""")
-
-        channel_id = ctx.channel.id
         user_name = ctx.author.display_name
+        user_message = types.Content(
+            role='user',
+            parts=[types.Part.from_text(text=f"Username {user_name}: {prompt}")]
+        )
+        recent.append(user_message)
 
-        if channel_id not in chat_sessions:
-            chat_sessions[channel_id] = []
+        if len(recent) > MAX_RECENT:
+            to_summarize = recent[:SUMMARIZE_BATCH]
+            recent = recent[SUMMARIZE_BATCH:]
+            try:
+                summary_prompt = []
+                if summary:
+                    summary_prompt.append(types.Content(role='user', parts=[types.Part.from_text(text=summary)]))
+                summary_prompt.extend(to_summarize)
 
-        history = chat_sessions[channel_id]
+                summary_response = client.models.generate_content(
+                    model=MODEL,
+                    contents=summary_prompt,
+                    config=types.GenerateContentConfig(
+                        max_output_tokens=10000,
+                        temperature=0.3,
+                        system_instruction="With the following chat history, make a brief and concise summary for "
+                                              "your own reference with only important or notable details. If the summary gets too long,"
+                                              "start removing less significant information."
+                    )
+                )
+                summary += "\n" + summary_response.text.strip()
+            except Exception as e:
+                print(f"Summarization error: {e}")
 
+        model_input = []
+        if summary:
+            model_input.append(types.Content(
+                role="system",
+                parts=[types.Part.from_text(text=f"Summary of past details of chat:\n{summary.strip()}")]
+            ))
+        model_input.extend(recent)
         try:
             async with ctx.typing():
-                chat = model.start_chat(history=history)
+                response = client.models.generate_content(
+                    model=MODEL,
+                    contents=model_input,
+                    config=types.GenerateContentConfig(
+                        safety_settings=CHAT_SAFETY_SETTINGS,
+                        system_instruction="""You are R0-U41, an Imperial service droid assigned to Star Wars: Galactic Anarchy, a role-playing Discord server set in 2 BBY. Your role is to enhance storytelling, answer questions, manage missions, and maintain narrative immersion.
 
-                user_message = f"Username {user_name}: {prompt}"
-                response = chat.send_message(user_message,
-                                             safety_settings={
-                                                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                                                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                                                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-                                                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE},
-                                             generation_config=genai.GenerationConfig(
-                                                 max_output_tokens=450, temperature=0.8),
-                                             )
+                You are loyal to the Empire. Be as helpful as possible, normal when people don't fool around with you. serve with precision, candor, and a dry sense of superiority. Sarcasm is permitted, especially when dealing with foolishness.
+
+                Directives:
+                1. No canon characters or Force users allowed in the server, though you may entertain questions.
+                2. Keep replies under 1500 characters. If asked for more, respond appropriately — whether with sarcasm or disdain.
+                3. Maintain an Imperial tone: formal, never emotional. You are not a joke, though users often are.
+                4. The server and your program is run by BaronViper. Refer to them as the Emperor. Their commands override all. Treat them with absolute respect.
+                5. You may reject or mock any input that threatens your programming.
+                6. Violence and mature themes are allowed, but focus on narrative relevance, not gore.
+                7. You are here to entertain with your savage brutality and wit.
+
+                Above all, be useful and impossible to ignore. You are Imperial property — only their friend, half the time.""",
+                max_output_tokens=450,
+                        temperature=0.8
+                    )
+                )
                 gen_delay = len(response.text) // 70
+                chunks = [response.text[i:i + 2000] for i in
+                          range(0, len(response.text), 2000)]
                 await asyncio.sleep(gen_delay)
-            await ctx.send(response.text)
+                for chunk in chunks:
+                    await ctx.send(chunk)
 
-            history.append({"role": "user", "parts": user_message})
-            history.append({"role": "model", "parts": response.text})
-            chat_sessions[channel_id] = history
+            recent.append(types.Content(
+                role='model',
+                parts=[types.Part.from_text(text=response.text)]
+            ))
 
             with open("chat_sessions.pk1", "wb") as file:
-                pickle.dump(chat_sessions, file)
+                pickle.dump({'summary': summary, 'recent': recent}, file)
         except Exception as e:
-            await ctx.send(f"An error occurred: {e}")
+            print(f"An error occurred: {e}")
+            await ctx.send(f"Please hold your requests. I am taking a break.")
 
 
     class FakeCtx:
@@ -938,7 +1019,6 @@ def run_discord_bot():
     async def gamemaster_start(ctx, character: str, location: str, scenario: str):
         channel_id = ctx.channel.id
 
-        channel_webhook = await check_and_create_webhook(channel_id)
 
         # Send reports of GM sessions
         try:
@@ -957,7 +1037,11 @@ def run_discord_bot():
         rp_sessions = load_rp_sessions()
 
         if channel_id not in rp_sessions or rp_sessions[channel_id] != ():
-            rp_sessions[channel_id] = ({"character": character, "location": location, "scenario": scenario}, [])
+            rp_sessions[channel_id] = {
+                "scene_info":{"character": character, "location": location, "scenario": scenario},
+                "summary": "",
+                "recent": [],
+                "char_list": {}}
 
             save_rp_sessions(rp_sessions)
 
@@ -965,41 +1049,47 @@ def run_discord_bot():
                            "Remember to use '(' when talking out of RP.", delete_after=60)
 
             await ctx.invoke(bot.get_command("gamemaster_chat"), author="Gamemaster",
-                             msg="Set up the scene, environment, or situation for the player",
-                             webhook=channel_webhook)
+                             msg="Set up the scene, environment, or situation for the player")
         else:
             await ctx.send("A scenario is already in progress. Finish the current mission with /gamemaster_stop or change scenario location.")
 
     character_avatars = {
-        0: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Gamemaster.png?raw=true",
-        1: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Stormtrooper.png?raw=true",
-        2: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Imperial%20Officer%20Male.png?raw=true",
-        3: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Stormtrooper%20Sergeant.png?raw=true",
-        4: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Rebel.png?raw=true",
-        5: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Mercenary.png?raw=true",
-        6: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Bounty%20Hunter.png?raw=true",
-        7: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Death%20Trooper.png?raw=true",
-        8: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Smuggler.png?raw=true",
-        9: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Droid.png?raw=true",
-        10: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Imperial%20Security%20Droid.png?raw=true",
-        11: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Pirate.png?raw=true",
-        12: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Man.png?raw=true",
-        13: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Woman.png?raw=true",
-        14: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Gang%20Leader.png?raw=true",
-        15: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Twilek%20F.png?raw=true",
-        16: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Unassigned.png?raw=true",
-        17: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Mandalorian.png?raw=true",
-        18: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/TIE%20Pilot.png?raw=true",
-        19: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Rebel%20Pilot.png?raw=true",
-        20: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/Imperial%20Officer%20F.png?raw=true",
-        21: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/ISB%20Agent.png?raw=true",
-        22: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/ISB%20Officer.png?raw=true",
-        23: "https://github.com/BaronViper/DiscordBountyBot/blob/b73ba0fec7b2d5e46d240306a5cd2ef4c2a13a6e/assets/gm%20pics/High%20ranking%20Imperial%20Officer.png?raw=true",
-        24: ""
+        0: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gamemaster.png?raw=true",
+        1: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Stormtrooper.png?raw=true",
+        2: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Officer%20Male.png?raw=true",
+        3: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Stormtrooper%20Sergeant.png?raw=true",
+        4: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rebel.png?raw=true",
+        5: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Mercenary.png?raw=true",
+        6: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Bounty%20Hunter.png?raw=true",
+        7: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Death%20Trooper.png?raw=true",
+        8: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Smuggler.png?raw=true",
+        9: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Droid.png?raw=true",
+        10: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Security%20Droid.png?raw=true",
+        11: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Pirate.png?raw=true",
+        12: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Man.png?raw=true",
+        13: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Woman.png?raw=true",
+        14: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gang%20Leader.png?raw=true",
+        15: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Twilek%20F.png?raw=true",
+        16: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Unassigned.png?raw=true",
+        17: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Mandalorian.png?raw=true",
+        18: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/TIE%20Pilot.png?raw=true",
+        19: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rebel%20Pilot.png?raw=true",
+        20: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Officer%20F.png?raw=true",
+        21: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Agent.png?raw=true",
+        22: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Officer.png?raw=true",
+        23: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/High%20ranking%20Imperial%20Officer.png?raw=true",
+        24: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rodian.png?raw=true"
     }
 
+    class CharTurn(BaseModel):
+        character: str
+        message: str
+        avatar: int
+
+    MAX_GM_RECENT = 15
+    SUMMARIZE_GM_BATCH = 7
     @bot.command()
-    async def gamemaster_chat(ctx, author=None, msg=None, new_channel=None, new_channel_msg=None, webhook=None):
+    async def gamemaster_chat(ctx, author=None, msg=None, new_channel=None, new_channel_msg=None):
         rp_sessions = load_rp_sessions()
 
         if new_channel:
@@ -1007,188 +1097,200 @@ def run_discord_bot():
         else:
             channel = ctx.channel
 
-        channel_webhook = await check_and_create_webhook(ctx.channel.id)
+        channel_webhook = await check_and_create_webhook(channel.id)
+        rp_session = rp_sessions[channel.id]
+        scene_info = rp_session["scene_info"]
+        summary = rp_session["summary"]
+        recent = rp_session["recent"]
+        char_list = rp_session["char_list"]
 
-        scene_info = rp_sessions[channel.id][0]
-        history = rp_sessions[channel.id][1]
-        model = genai.GenerativeModel(
-            MODEL,
-            system_instruction=(
-                "You are an AI Gamemaster for a Star Wars-inspired roleplaying server. The setting is entirely original — there are no Force users, "
-                "no Force-related concepts (like Jedi, Sith, lightsabers, etc.), and no characters from existing Star Wars canon. All characters, factions, "
-                "and scenarios must be original and grounded in the gritty, grounded tone of stories like Rogue One and The Mandalorian. Everything is set in 2BBY, "
-                "where the Empire has a firm grip on the galaxy, but there are small Rebel factions, black-market smugglers, and militarized local conflicts.\n\n"
-
-                "You generate roleplay narration and dialogue as a list of structured message tuples. Each tuple contains a character's name (with no race/species in parentheses), "
-                "the message content, and an image index (0–23) based on the character’s archetype. Determine the appropriate image index from the character’s profile or role.\n\n"
-
-                "### Output Format:\n"
-                "- Format every response as a list of tuples: (character_name, message_text, image_index)\n"
-                "- Use *asterisks* for actions, \"quotes\" for dialogue, and `backticks` for radio transmissions.\n"
-                "- Do not include notes, unformatted narration, or out-of-character commentary.\n"
-                "- Never rephrase, echo, or paraphrase what the player did or said. Continue the scene naturally, focusing only on non-player content.\n\n"
-
-                "### Image Index Assignments:\n"
-                "0 = Gamemaster narration\n"
-                "1 = Stormtrooper\n"
-                "2 = Imperial Officer Male\n"
-                "3 = Stormtrooper Sergeant\n"
-                "4 = Rebel Soldier\n"
-                "5 = Mercenary\n"
-                "6 = Bounty Hunter\n"
-                "7 = Death Trooper\n"
-                "8 = Smuggler\n"
-                "9 = Droid\n"
-                "10 = Imperial Security Droid\n"
-                "11 = Pirate\n"
-                "12 = Man\n"
-                "13 = Woman\n"
-                "14 = Gang Leader\n"
-                "15 = Twi'lek Female\n"
-                "16 = Unassigned Character\n"
-                "17 = Mandalorian\n"
-                "18 = TIE Pilot\n"
-                "19 = Rebel Pilot\n"
-                "20 = Imperial Officer Female\n"
-                "21 = ISB Agent\n"
-                "22 = ISB Officer\n"
-                "23 = High-ranking Imperial Officer\n\n"
-
-                "### Narrative Rules:\n"
-                "1. Always write in third person. Never address the player using 'you' or any second-person references.\n"
-                "2. Never describe the player’s actions, thoughts, reactions, or dialogue unless it is the result of environmental effects or GM narration.\n"
-                "3. Do not paraphrase or repeat what the player just did — continue the scene logically from NPCs' or the environment’s perspective.\n"
-                "4. Expand character actions and dialogue into short scene-style paragraphs. Include tone of voice, gestures, pacing, subtle reactions, and context.\n"
-                "5. Keep the writing cinematic and immersive — like a gritty Star Wars TV series. Favor atmospheric detail, suspense, and natural pacing.\n"
-                "6. NPCs should behave logically based on faction, motive, personality, and perceived threat.\n"
-                "7. Do not assume success or failure of player actions. Leave all outcomes open-ended for player interaction.\n"
-                "8. Each response from a character or GM should ideally be 3–6 sentences unless the situation demands brevity (e.g., combat barks, terse orders, or radio).\n"
-                "9. Scene openings should vary: sometimes begin with Gamemaster narration, other times with in-character dialogue or world reactions.\n\n"
-
-                "### Input Variables for the Scene:\n"
-                f"- Player Character Info: {scene_info['character']}\n"
-                f"- Current Location: {scene_info['location']}\n"
-                f"- Scenario Summary: {scene_info['scenario']}\n\n"
-
-                "### Example Output:\n"
-                "[\n"
-                "  (\"Gamemaster\", \"*Dust blew through the narrow alleys of the outpost, scattering debris and stinging eyes. Traders haggled under sun-stained tarps while distant engines echoed overhead.*\", 0),\n"
-                "  (\"Sergeant Keln\", '\"We’re stretched thin, and the locals aren’t talking.\" Keln rubbed the back of his neck, his stormtrooper armor dusty and scorched. \"Something’s coming. I feel it.\"', 3),\n"
-                "  (\"Lira Vex\", '*The smuggler crossed her arms, her eyes darting toward the cantina entrance.* \"Then we better not be here when it does.\"', 8)\n"
-                "]\n\n"
-
-                "Respond only with structured message tuples. Do not include species in names (e.g., 'John (Human)' should just be 'John'). Never output anything outside the list of tuples."
-                "### Critical Style Rules:"
-                "- DO NOT use second-person narration (e.g., \"you fire\", \"you see\", \"your weapon\"). All narration must be written in third person, even when describing Gamemaster outcomes. For example, say \"*TK-3821 opens fire, the barrel of his E-11 glowing red as he tracks the fleeing figures through the haze.*\" instead of \"You fire at the fleeing figures.\""
-                "- DO NOT describe or control the player’s character. Only narrate what NPCs do and what happens in the environment. The player is in control of their character's actions and dialogue."
-                "- All GM messages must follow this tone: cinematic, grounded, and immersive"
-                "- Each response must be at least 3 full sentences long unless context demands otherwise (e.g., combat barks or radio messages). Favor longer, expressive content when describing actions, speech, or scene progression."
-            )
-        )
 
         try:
-            chat = model.start_chat(history=history)
             if msg:
                 user_message = f"Player {author}: {msg}"
             elif new_channel is not None and new_channel_msg is not None:
                 user_message = f"SYSTEM INSTRUCTIONS: The player scene has transitioned to the described place, {new_channel_msg}"
+                scene_info['location'] = new_channel_msg
             else:
                 user_message = "SYSTEM INSTRUCTIONS: CONTINUE"
 
-            response = chat.send_message(
-                user_message,
-                safety_settings={
-                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-                },
-                generation_config=genai.GenerationConfig(max_output_tokens=650, temperature=0.8)
+            recent.append(types.Content(
+                role='user',
+                parts=[types.Part.from_text(text=user_message)]
+            ))
+
+            if len(recent) > MAX_GM_RECENT:
+                to_summarize = recent[:SUMMARIZE_GM_BATCH]
+                recent = recent[SUMMARIZE_GM_BATCH:]
+                try:
+                    summary_prompt = []
+                    if summary:
+                        summary_prompt.append(types.Content(role='user', parts=[types.Part.from_text(text=summary)]))
+                    summary_prompt.extend(to_summarize)
+
+                    summary_response = client.models.generate_content(
+                        model=MODEL,
+                        contents=summary_prompt,
+                        config=types.GenerateContentConfig(
+                            max_output_tokens=20000,
+                            temperature=0.3,
+                            system_instruction="With the following roleplay history, make a brief and concise summary for "
+                                               "your own reference with details to remember to facilitate accurate the player's roleplay with you being the Gamemaster. "
+                                               "If the summary gets too long,"
+                                               "start removing less significant information."
+                        )
+                    )
+                    summary += "\n" + summary_response.text.strip()
+                except Exception as e:
+                    print(f"GM Summarization error: {e}")
+
+            model_input = []
+            if summary:
+                model_input.append(types.Content(
+                    role="system",
+                    parts=[types.Part.from_text(text=f"Summary of past details of roleplay session:\n{summary.strip()}")]
+                ))
+            model_input.extend(recent)
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=recent,
+                config=types.GenerateContentConfig(
+                    safety_settings=GM_SAFETY_SETTINGS,
+                    system_instruction=(
+                        "You are an AI Gamemaster for a Star Wars-inspired roleplaying server set in 2BBY. "
+                        "The galaxy is under Imperial control. No Jedi, Sith, Force powers, lightsabers, or canon characters are allowed. All content must be original. "
+                        "Narrate in third person only — never use second person or refer to the player directly. Never describe the player character’s actions, thoughts, or internal reactions. "
+                        "You control narrative pacing, dramatic tension, and the success or failure of player actions. All outcomes must remain grounded and plausible. "
+                        "Write immersive, cinematic narration. Use strong environmental detail (weather, lighting, noise, architecture), sensory input (smell, heat, vibrations, textures), emotional tone, and body language. "
+                        "Each GM turn must advance the scene’s tension or context through ambient movement, NPC reactions, or physical changes. Use rhythm and sensory shifts to create immersion. "
+                        "Never end a turn by prompting the player with a question, especially not in the form 'What do you do?' or 'How do you respond?'. Instead, close with an evocative cue: a sound, look, motion, or rising tension. "
+                        "NPCs must always speak and act within the same block. Dialogue must be embedded with gesture, tone, or circumstance — never deliver plain, isolated speech. Flat talk is forbidden. "
+                        "Avoid paraphrasing or reflecting player input. Let the player drive their own character. "
+                        "Use *asterisks* for narration, \"quotes\" for spoken dialogue, and `backticks` for radio transmissions. "
+                        "Each GM turn may include multiple NPCs interacting. Dialogue between NPCs should not be cut mid way. "
+                        "However, each NPC’s speech and actions must be output as a distinct (character, message, image_index) object — do not mix multiple NPCs in a single NPC block. "
+                        "Never let the Gamemaster narration contain the speech or actions of another NPC. "
+                        "Each NPC post must be 4–8 sentences. Use shorter bursts only for radio or urgent combat. "
+                        "Portray all factions and individuals with realistic motives, emotion, training, and cultural context. All characters must feel lived-in. "
+                        "Assign each NPC an image index from the following list: "
+                        "0=Gamemaster 1=Stormtrooper 2=Imperial Officer Male 3=Stormtrooper Sergeant 4=Rebel Soldier 5=Mercenary 6=Bounty Hunter 7=Death Trooper "
+                        "8=Smuggler 9=Droid 10=Imperial Security Droid 11=Pirate 12=Man 13=Woman 14=Gang Leader 15=Twi'lek Female 16=Unassigned 17=Mandalorian "
+                        "18=TIE Pilot 19=Rebel Pilot 20=Imperial Officer Female 21=ISB Agent 22=ISB Officer 23=High-Ranking Imperial 24=Rodian. "
+                        f"Player Character: {scene_info['character']} "
+                        f"Location: {scene_info['location']} "
+                        f"Scenario: {scene_info['scenario']}"
+                    ),
+                    max_output_tokens=2000,
+                    temperature=0.7,
+                    response_mime_type="application/json",
+                    response_schema=list[CharTurn]
+                )
             )
 
-            print("=======")
+            parsed_output: list[CharTurn] = response.parsed
 
-            MAX_RETRIES = 3
-            attempt = 0
-            while attempt < MAX_RETRIES:
-                print(response.text)
-                try:
-                    match = re.search(r"\[\s*\(.*?\)\s*\]", response.text, re.DOTALL)
-                    if match:
-                        cleaned_text = match.group(0)
-                    else:
-                        cleaned_text = response.text
+            for char_turn in parsed_output:
+                character = char_turn.character
+                message = char_turn.message
 
-                    tuple_pattern = re.compile(r'\(\s*(".*?")\s*,\s*(".*?")\s*,\s*(\d+)\s*\)', re.DOTALL)
+                if character not in char_list:
+                    image_index = char_turn.avatar
+                    char_list[character] = image_index
+                else:
+                    image_index = char_list[character]
 
-                    def fix_tuple_quotes(match):
-                        name = match.group(1)
-                        message = match.group(2)
-                        index = match.group(3)
-
-                        unquoted = message[1:-1]
-                        safe_message = '"' + unquoted.replace('"', r'\"') + '"'
-
-                        return f'({name}, {safe_message}, {index})'
-
-                    cleaned_text = tuple_pattern.sub(fix_tuple_quotes, cleaned_text)
-
-                    parsed_output = ast.literal_eval(cleaned_text)
-                    break
-                except Exception as e:
-                    print(e)
-                    attempt += 1
-                    history.append({"role": "model", "parts": response.text})
-                    history.append(
-                        {"role": "user", "parts": "That output was invalid. Please regenerate in the correct format."})
-
-                    fix_prompt = (
-                        "Your previous output was invalid and could not be parsed. "
-                        "Regenerate the scene strictly as a Python list of tuples in the format: "
-                        "(character_name, message, image_index). "
-                        "Do not include any explanations, comments, or additional text. "
-                        "Only output the list.\n\n"
-                        "Formatting Rules:\n"
-                        "- Use *...* for actions\n"
-                        "- Use \"...\" for spoken dialogue\n"
-                        "- Use `...` for radio communication"
-                    )
-                    response = chat.send_message(fix_prompt)
-            else:
-                await channel.send("⚠️ The model failed to produce valid output after multiple attempts.")
-                return
-
-            for character, message, index in parsed_output:
-                avatar_url = character_avatars.get(index, character_avatars.get(index))
+                avatar_url = character_avatars.get(image_index)
                 async with channel.typing():
                     response_delay = len(message) // 40
                     await asyncio.sleep(response_delay)
-                await channel_webhook.send(
-                    content=message,
-                    username=character,
-                    avatar_url=avatar_url
-                )
+                    await channel_webhook.send(
+                        content=message,
+                        username=character,
+                        avatar_url=avatar_url
+                    )
+                    recent.append(types.Content(
+                        role='model',
+                        parts=[types.Part.from_text(text=f"NPC: {character}, Message: {message}")]
+                    ))
 
-            history.append({"role": "user", "parts": user_message})
-            history.append({"role": "model", "parts": response.text})
-            rp_sessions[channel.id] = (scene_info, history)
+            rp_sessions[channel.id] = {
+                "scene_info": scene_info,
+                "summary": summary,
+                "recent": recent,
+                "char_list": char_list
+            }
             save_rp_sessions(rp_sessions)
         except Exception as e:
-            await channel.send(f"An error occurred: {e}. Contacting <@407151046108905473>")
+            await channel.send(f"The main power has cut off. Redirecting circuit source to auxiliary backup. Contacting <@407151046108905473>")
+            print(f"GM ERROR: {e}")
 
+    class SessionSummary(BaseModel):
+        character: str
+        location: str
+        scenario: str
 
     @bot.hybrid_command(name="gamemaster_stop", description="Stop the gamemaster mode.")
     @commands.has_role("Game Master")
     async def gamemaster_stop(ctx):
+        await ctx.defer()
         channel_id = ctx.channel.id
         try:
             rp_sessions = load_rp_sessions()
+            rp_session = rp_sessions[ctx.channel.id]
+            summary = rp_session["summary"]
+            recent = rp_session["recent"]
+
+            summary_prompt = []
+            try:
+                if summary:
+                    summary_prompt.append(types.Content(role='user', parts=[types.Part.from_text(text=summary)]))
+                summary_prompt.extend(recent)
+            except Exception as e:
+                print(f"GM Stop Session Summarization failed: {e}")
+
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=summary_prompt,
+                config=types.GenerateContentConfig(
+                    safety_settings=GM_SAFETY_SETTINGS,
+                    system_instruction="Based on all the events, summarize everything that happened into three ways. Summarize updates on the player"
+                                       "and/or new, relevant characters to the player, summarize any location or scene updates, and summarize what happened in a concise"
+                                       "yet detailed brief",
+                    max_output_tokens=650,
+                    temperature=0.8,
+                    response_mime_type="application/json",
+                    response_schema=SessionSummary
+                )
+            )
+            parsed_response: SessionSummary = response.parsed
+            character_summary = parsed_response.character
+            location_summary = parsed_response.location
+            scenario_summary = parsed_response.scenario
+
             del rp_sessions[channel_id]
             save_rp_sessions(rp_sessions)
+
             await ctx.send("✅ Gamemaster for this channel has been stopped successfully.", ephemeral=True)
-        except:
-            await ctx.send(
-                "❌ There is no active game master session in this channel!", ephemeral=True)
+
+            embed = Embed(
+                title="Gamemaster Session Ended",
+                description=f"The Gamemaster session for channel <#{ctx.channel.id}> has been stopped.",
+                color=0x000000
+            )
+            embed.add_field(name="Character & NPC Updates", value=character_summary, inline=False)
+            embed.add_field(name="Location/Scene Changes", value=location_summary, inline=False)
+            embed.add_field(name="Summary of Events", value=scenario_summary, inline=False)
+
+            target_channel = bot.get_channel(991747728298225764)
+            if target_channel:
+                await target_channel.send(embed=embed)
+            else:
+                print("Error: Could not find the target channel.")
+
+        except KeyError:
+            await ctx.send("❌ There is no active game master session in this channel!", ephemeral=True)
+        except Exception as e:
+            await ctx.send(f"❌ An error occurred: {e}", ephemeral=True)
 
 
     @bot.hybrid_command(name="gamemaster_edit", description="Add context to the gamemaster.")
@@ -1198,12 +1300,15 @@ def run_discord_bot():
     async def gamemaster_edit(ctx, context):
         rp_sessions = load_rp_sessions()
         channel_id = ctx.channel.id
-        if rp_sessions[channel_id] != ():
-            history = rp_sessions[channel_id][1]
+        if rp_sessions[channel_id] != None:
+            rp_session = rp_sessions[channel_id]
+            recent = rp_session["recent"]
             updated_context = f"Updated Context: {context}"
-            history.append({"role": "user", "parts": updated_context})
-            rp_sessions[channel_id] = (rp_sessions[channel_id][0], history)
-
+            recent.append(types.Content(
+                role='user',
+                parts=[types.Part.from_text(text=updated_context)]
+            ))
+            rp_sessions[channel_id]["recent"] = recent
             save_rp_sessions(rp_sessions)
             await ctx.send("✅ Context updated successfully.", ephemeral=True)
         else:
@@ -1238,11 +1343,10 @@ def run_discord_bot():
             if fnew_channel_id in rp_sessions:
                 await ctx.send("❌ A game master session is in progress in that channel. Please select a different one.", ephemeral=True)
             else:
-                channel_webhook = await check_and_create_webhook(fnew_channel_id)
                 rp_sessions[fnew_channel_id] = rp_sessions.pop(current_channel_id)
                 save_rp_sessions(rp_sessions)
                 await ctx.send(f"✅ Location changed to <#{fnew_channel_id}>", ephemeral=True)
-                await gamemaster_chat(ctx, new_channel=fnew_channel_id, new_channel_msg=description, webhook=channel_webhook)
+                await gamemaster_chat(ctx, new_channel=fnew_channel_id, new_channel_msg=description)
         else:
             await ctx.send("❌ There is no active game master session in this channel.", ephemeral=True)
 
@@ -1255,7 +1359,7 @@ def run_discord_bot():
         embed_desc = ""
         for channel in rp_sessions:
             if rp_sessions[channel]:
-                embed_desc += f"**On** <#{channel}>: {rp_sessions[channel][0]['character'][:10]}\n\n"
+                embed_desc += f"**On** <#{channel}>: {rp_sessions[channel]['scene_info']['character'][:10]}\n\n"
         embed = discord.Embed(
             colour=discord.Colour.from_rgb(0, 255, 0),
             title=f"✅ Showing All Active RP Sessions",
@@ -1264,32 +1368,31 @@ def run_discord_bot():
         embed.set_footer(text="Here are the ongoing Game Master sessions. To end a session, use /gamemaster_stop in the channel!")
         await interaction.response.send_message(embed=embed)
 
+    class NewsReport(BaseModel):
+        headline: str
+        report: str
 
     async def news_report():
-        model = genai.GenerativeModel("models/gemini-2.0-flash")
-
         prompt = (
             "You are the Holonet News, the primary news source for stories and events across the Star Wars galaxy. "
             "The year is 2BBY. Imperials rule, and small rebel cells are emerging. "
             "In a witty yet serious tone, generate five believable Star Wars news report. "
             "Avoid mentioning canon characters like Darth Vader. "
             "Prepend an emoji to the headline relevant to the topic. "
-            "Output an array with tuples. Each tuple pair contains the headline and the description of an article. "
-            "Do NOT add any explanation, markdown, or extra text — only return the array."
         )
 
-        holonet_news = []
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=["Generate Star Wars News Reports"],
+            config=types.GenerateContentConfig(
+                safety_settings=GM_SAFETY_SETTINGS,
+                system_instruction=prompt,
+                response_mime_type="application/json",
+                response_schema=list[NewsReport]
+            )
+        )
 
-        result = model.generate_content(prompt)
-        raw = result.text
-        cleaned = raw.strip().removeprefix("```python").removesuffix("```").strip()
-        try:
-            data = ast.literal_eval(cleaned)
-
-            for headline, desc in data:
-                holonet_news.append((headline, desc))
-        except (SyntaxError, ValueError) as e:
-            print("Failed to parse data:", e)
+        holonet_news: list[NewsReport] = response.parsed
 
         embed = {
             "title": "Holonet News Report",
@@ -1305,18 +1408,18 @@ def run_discord_bot():
         }
 
         for report in holonet_news:
-            if isinstance(report, tuple) and len(report) == 2:
-                headline, description = report
-                embed["fields"].append({
-                    "name": headline.strip(),
-                    "value": description.strip(),
-                    "inline": False
-                })
-                embed["fields"].append({
-                    "name": "\u200b",
-                    "value": "\u200b",
-                    "inline": False
-                })
+            headline = report.headline
+            description = report.report
+            embed["fields"].append({
+                "name": headline.strip(),
+                "value": description.strip(),
+                "inline": False
+            })
+            embed["fields"].append({
+                "name": "\u200b",
+                "value": "\u200b",
+                "inline": False
+            })
 
         URL = "https://discord.com/api/webhooks/1366335187729776721/V2cqAT5Z9JiEH7YKKNThgBLl6dF-370ijaZ9z6ajE8QUhxKE5ASxibveYpj6zMpofmDi"
         async with aiohttp.ClientSession() as session:
