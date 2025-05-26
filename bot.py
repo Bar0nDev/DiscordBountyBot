@@ -25,8 +25,6 @@ import pickle
 
 dotenv.load_dotenv()
 
-Base = declarative_base()
-
 client = genai.Client(api_key=os.getenv("API_KEY"))
 guild_id = 709884234214408212
 MODEL = "gemini-2.0-flash"
@@ -68,33 +66,6 @@ GM_SAFETY_SETTINGS = [
         threshold=types.HarmBlockThreshold.BLOCK_NONE,
     )
 ]
-
-class Missions(Base):
-    __tablename__ = "missions"
-    id = Column(Integer, primary_key=True)
-    title = Column(String)
-    description = Column(String)
-    reward = Column(Integer)
-    difficulty = Column(String)
-    faction = Column(String)
-    availability = Column(String)
-
-
-class Bounties(Base):
-    __tablename__ = "bounties"
-    id = Column(Integer, primary_key=True)
-    target = Column(String)
-    description = Column(String)
-    reward = Column(Integer)
-    client = Column(String)
-
-
-engine = create_engine("sqlite:///info.db", echo=True)
-
-Base.metadata.create_all(engine)
-
-Session = sessionmaker(bind=engine)
-session = Session()
 
 
 def run_discord_bot():
