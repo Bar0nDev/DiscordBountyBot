@@ -1,45 +1,88 @@
-# Discord Bounty Bot
-This is a Discord bot designed to manage job postings and bounties for a gaming or rpg community. More features to come!
+# 🛰️ AI Gamemaster Discord Bot
 
-## Installation
-1. Clone the repository
-2. Create a virtual environment with Python 3.8 or higher
-3. Install the required dependencies with pip install -r requirements.txt
-4. Create a .env file and set your DISCORD_TOKEN found in Discord's Developer Application portal.
-5. Run the bot with python main.py
+A fully modular, AI-powered Discord bot tailored for immersive Star Wars-themed roleplaying and economy gameplay. Packed with features like mission & bounty tracking, AI storytelling, and automated rewards—built to scale with your RP community.
 
-## Dependencies
-* discord.py
-* SQLAlchemy
-* python-dotenv
+---
 
-## Commands
-Note: Slash commands are supported! Just enter "/" in Discord's chat box and select the desired command options for the bot.
-* \>add_mission: Adds a new mission. Only accessible by users with the "Game Master" role.
-* \>add_bounty: Adds a new bounty. Only accessible by users with the "Member" role.
-* \>all_missions: Shows all available missions.
-* \>all_bounties: Shows all available bounties.
-* \>edit_mission: Edits an already registered mission specified by mission ID and faction. Only accessible by users with the "Game Master" role.
-* \>delete_bounty: Deletes a bounty specified by bounty ID.
-* \>delete_mission: Deletes a mission specified by mission ID.
+## 🚀 Features
 
-## Usage
-Once the bot is running and connected to your Discord server, users with the appropriate roles ("@Game Master", "@Member") can use the commands to add new job postings or view available missions.
+### 🧠 AI-Driven Experiences
+- **AI Gamemaster:** Uses OpenAI and Gemini APIs to generate narrative-driven roleplaying scenes.
+- **AI Chatbot:** Intelligent character-based replies in designated IC (in-character) or OOC channels.
+- **AI Holo News Reports:** Scheduled galaxy-wide news broadcasts auto-generated and stylized in-universe.
 
-#### Add a mission (@Game Master)
-Use the >add_mission command to add a new mission. The bot will prompt you to confirm the details before adding it to the database. The mission details include the title, difficulty, reward, and description.
+### 📜 Mission & Bounty Tracking (SQL-Powered)
+- Create, edit, and manage **missions and bounties** with factions, rewards, availability, and difficulty.
+- SQLAlchemy-backed persistence for tracking active, completed, or failed objectives.
+- Confirmation-based command interactions with Discord embeds and reactions.
 
-#### Add a bounty (@Member)
-Use the >add_bounty command to add a new bounty. The bot will prompt you to confirm the details before adding it to the database. The bounty details include the target, reward, and description.
+### 💸 Game Features
+- **🎲 Pod Racing (Mini-Game):** High-stakes racing game where users bet and win credits.
+- **📈 Credit System Integration:** Seamless economy connection via **UnbelievaBoat's API**.
+- **📢 Bump Tracker:** Detects `!d bump` and rewards bumpers with credits automatically.
 
-#### Delete a mission (@Game Master)
-Use the >delete_mission command to delete a mission. The bot will prompt you to confirm the details before deleting it from the database.
+### 📡 Webhook Immersion
+- Multiple NPCs or GM voices simulated using Discord webhooks.
+- Character image indexing system for dynamic RP scenes and role distinction.
 
-#### Delete a bounty (@Game Master)
-Use the >delete_bounty command to delete a bounty. The bot will prompt you to confirm the details before deleting it from the database.
+---
 
-#### View available missions
-Use the >all_missions command to view all available missions. The bot will display a list of all missions currently in the database.
+## 🧩 Tech Stack
 
-#### View available bounties
-Use the >all_bounties command to view all available bounties. The bot will display a list of all bounties currently in the database.
+- **discord.py** (Hybrid & Application Commands)
+- **SQLAlchemy** (Missions, Users, Economy)
+- **OpenAI + Gemini API** (AI storytelling and chatbot)
+- **UnbelievaBoat API** (Credit tracking and payouts)
+- **AsyncIO + Schedulers** (For timeouts and holo-news posting)
+- **Webhooks & Embeds** (RP display and formatting)
+
+---
+
+## 🧾 Commands Preview (Full List not Included)
+
+| Command                | Description                             |
+|------------------------| --------------------------------------- |
+| `/add_mission`         | Create a new mission (Game Master only) |
+| `/edit_mission`        | Update mission title, reward, etc.      |
+| `/all_bounties`        | View or assign bounties by faction      |
+| `/gamemaster_start`    | Start a new AI RP scene                 |
+| `/gamemaster_continue` | Continue existing scene with prompt     |
+| `/gamemaster_stop`     | Archive or end the RP session           |
+| `/podrace`             | Start a Pod Racing economy game         |
+
+---
+
+## 📦 Folder Structure
+
+```
+├── bot.py
+├── utils.py
+├── cogs/
+│   ├── bounty_cog.py
+│   ├── chat_cog.py
+│   ├── dev_cog.py
+│   ├── econ_cog.py
+│   ├── gm_cog.py
+│   ├── mission_cog.py
+│   └── news_cog.py
+├── db/
+│   ├── models.py
+│   └── sessions.py
+├── .env
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## 🛡️ Permissions
+
+This bot uses **role-based access**. Only users with the `Game Master` role can:
+
+* Add, edit, or delete missions
+* Trigger AI GM sessions or edit sessions
+
+---
+
+Made with ⚔️ by roleplayers, for roleplayers.
+
