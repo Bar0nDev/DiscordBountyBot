@@ -1,7 +1,5 @@
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
 from discord.ext import commands
-from pydantic import BaseModel
-import aiohttp
 import dotenv
 import os
 import discord
@@ -23,12 +21,11 @@ def run_discord_bot():
 
     @bot.event
     async def on_ready():
+        news_cog = bot.get_cog("NewsCog")
+        if news_cog:
+            await news_cog.handle_news_report()
         await change_status()
-        scheduler = AsyncIOScheduler()
-        scheduler.add_job(news_report, 'interval', hours=6)
-        scheduler.start()
         print(f"{bot.user} online")
-        # await news_report()
 
     @bot.event
     async def on_command_error(ctx, error):
@@ -69,37 +66,27 @@ def run_discord_bot():
         if message.author == bot.user:
             return
 
-        await process_disboard_bump(message)
-        await process_oc_submission(message)
+        econ_cog = bot.get_cog("EconCog")
+        if econ_cog:
+            await econ_cog.process_bumps(message)
 
-        # Checks if chat channel has been disabled from AI
-        no_chat_channels = get_nochat_channels()
+        chat_cog = bot.get_cog("ChatCog")
+        if chat_cog:
+            await chat_cog.handle_normal_chat(message)
 
-        if message.channel.id in no_chat_channels:
-            return
+        game_cog = bot.get_cog("GMCog")
+        if game_cog:
+            await game_cog.handle_gamemaster_message(message)
 
-        rp_sessions = load_rp_sessions()
-
-        if message.channel.id not in rp_sessions or not rp_sessions[message.channel.id]:
-            if bot.user.mentioned_in(message):
-                mention = f"<@{bot.user.id}>"
-                prompt = message.content.replace(mention, "").strip()
-                if prompt:
-                    ctx = await bot.get_context(message)
-                    await chat(ctx, prompt)
-        else:
-            channel_webhook = await check_and_create_webhook(message.channel.id)
-            if (
-                message.webhook_id is not None
-                and message.author.bot
-                and message.author.discriminator == "0000"
-                and not message.content.startswith("(")
-                and channel_webhook.id != message.webhook_id
-            ):
-                ctx = await bot.get_context(message)
-                await ctx.invoke(bot.get_command("gamemaster_chat"), author=message.author.display_name,
-                                              msg=message.content)
         await bot.process_commands(message)
 
 
-    bot.run(os.getenv('TOKEN'))
+    async def main():
+        print("Loading Cogs...")
+        for filename in os.listdir("./cogs"):
+            if filename.endswith(".py") and filename != "__init__.py":
+                await bot.load_extension(f"cogs.{filename[:-3]}")
+        await bot.start(os.getenv('TOKEN'))
+
+
+    asyncio.run(main())

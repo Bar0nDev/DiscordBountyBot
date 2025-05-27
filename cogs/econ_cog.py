@@ -187,6 +187,11 @@ class EconCog(commands.Cog):
                 await message.add_reaction("✅")
 
 
+    async def process_bumps(self, message):
+        await self.process_disboard_bump(message)
+        await self.process_oc_submission(message)
+
+
 
 async def setup(bot):
     await bot.add_cog(EconCog(bot))

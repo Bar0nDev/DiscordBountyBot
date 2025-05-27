@@ -5,6 +5,7 @@ from google import genai
 from google.genai import types
 import os
 import pickle
+from utils import *
 
 MAX_RECENT = 30
 SUMMARIZE_BATCH = 15
@@ -197,6 +198,23 @@ class ChatCog(commands.Cog):
         except Exception as e:
             print(f"An error occurred: {e}")
             await ctx.send("An error occurred while trying to enable the channel.")
+
+
+    async def handle_normal_chat(self, message):
+        no_chat_channels = get_nochat_channels()
+        if message.channel.id in no_chat_channels:
+            return
+
+        rp_sessions = load_rp_sessions()
+        if message.channel.id in rp_sessions and rp_sessions[message.channel.id]:
+            return  # Don't respond in active RP sessions
+
+        if self.bot.user.mentioned_in(message):
+            mention = f"<@{self.bot.user.id}>"
+            prompt = message.content.replace(mention, "").strip()
+            if prompt:
+                ctx = await self.bot.get_context(message)
+                await self.chat(ctx, prompt)
 
 
 

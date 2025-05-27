@@ -1,3 +1,4 @@
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import aiohttp
 from discord.ext import commands
 from google import genai
@@ -35,6 +36,9 @@ class NewsReport(BaseModel):
 class NewsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.scheduler = AsyncIOScheduler()
+        self.scheduler.add_job(self.news_report, 'interval', hours=6)
+        self.scheduler_started = False
 
 
     async def news_report(self):
@@ -94,6 +98,13 @@ class NewsCog(commands.Cog):
             async with session.post(URL, json=webhook_data) as response:
                 if response.status != 204:
                     print(f'Failed to send embed: {response.status}')
+
+
+    async def handle_news_report(self):
+        if not self.scheduler_started:
+            self.scheduler.start()
+            self.scheduler_started = True
+        await self.news_report()
 
 
 async def setup(bot):

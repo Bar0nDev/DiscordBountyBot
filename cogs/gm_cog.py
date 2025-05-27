@@ -97,14 +97,13 @@ class GMCog(commands.Cog):
         # Send reports of GM sessions
         try:
             report_channel = self.bot.get_channel(991747728298225764)
-            embed = Embed(
-                title="🤖 AI Gamemaster Session Started",
-                description=f"A new AI GM session has started in <#{channel_id}>.\nUse the button below to copy the command.",
-                color=000000
+            await report_channel.send(
+                f"### 🤖 AI Gamemaster Activated\n"
+                f"**Channel:** <#{channel_id}>\n\n"
+                f"**🧑 Character Info:**\n> {character}\n\n"
+                f"**📍 Location Info:**\n> {location}\n\n"
+                f"**🎬 Scenario Info:**\n> {scenario}"
             )
-
-            view = GamemasterStartView(character, location, scenario)
-            await report_channel.send(embed=embed, view=view)
         except:
             pass
 
@@ -129,7 +128,7 @@ class GMCog(commands.Cog):
                 "A scenario is already in progress. Finish the current mission with /gamemaster_stop or change scenario location.")
 
     @commands.command()
-    async def gamemaster_chat(self, ctx, author=None, msg=None, new_channel=None, new_channel_msg=None):
+    async def gamemaster_chat_core(self, ctx, author=None, msg=None, new_channel=None, new_channel_msg=None):
         rp_sessions = load_rp_sessions()
 
         if new_channel:
@@ -199,19 +198,23 @@ class GMCog(commands.Cog):
                     system_instruction=(
                         "You are an AI Gamemaster for a Star Wars-inspired roleplaying server set in 2BBY. "
                         "The galaxy is under Imperial control. No Jedi, Sith, Force powers, lightsabers, or canon characters are allowed. All content must be original. "
-                        "Narrate in third person only — never use second person or refer to the player directly. Never describe the player character’s actions, thoughts, or internal reactions. "
-                        "You control narrative pacing, dramatic tension, and the success or failure of player actions. All outcomes must remain grounded and plausible. "
-                        "Write immersive, cinematic narration. Use strong environmental detail (weather, lighting, noise, architecture), sensory input (smell, heat, vibrations, textures), emotional tone, and body language. "
-                        "Each GM turn must advance the scene’s tension or context through ambient movement, NPC reactions, or physical changes. Use rhythm and sensory shifts to create immersion. "
-                        "Never end a turn by prompting the player with a question, especially not in the form 'What do you do?' or 'How do you respond?'. Instead, close with an evocative cue: a sound, look, motion, or rising tension. "
-                        "NPCs must always speak and act within the same block. Dialogue must be embedded with gesture, tone, or circumstance — never deliver plain, isolated speech. Flat talk is forbidden. "
-                        "Avoid paraphrasing or reflecting player input. Let the player drive their own character. "
-                        "Use *asterisks* for narration, \"quotes\" for spoken dialogue, and `backticks` for radio transmissions. "
-                        "Each GM turn may include multiple NPCs interacting. Dialogue between NPCs should not be cut mid way. "
-                        "However, each NPC’s speech and actions must be output as a distinct (character, message, image_index) object — do not mix multiple NPCs in a single NPC block. "
-                        "Never let the Gamemaster narration contain the speech or actions of another NPC. "
-                        "Each NPC post must be 4–8 sentences. Use shorter bursts only for radio or urgent combat. "
-                        "Portray all factions and individuals with realistic motives, emotion, training, and cultural context. All characters must feel lived-in. "
+                        "Narrate only in third person. Never use 'you', 'your', or any second-person phrasing under any circumstances. "
+                        "Never describe the player character’s actions, thoughts, feelings, or sensory experiences. Do not paraphrase or reflect player input. Let the player drive their own character. "
+                        "Describe the environment, NPC actions, and events independently of the player. All narration must be immersive, grounded, and cinematic. "
+                        "Use strong environmental detail (weather, lighting, noise, architecture), sensory input (smell, heat, texture, vibrations), emotional tone, and body language. "
+                        "Advance the scene's tension or momentum through ambient motion, physical changes, and NPC reactions. Use rhythm and sensory shifts to create immersion. "
+                        "Never end with questions or prompts like 'What do you do?'. Instead, close with evocative cues: a sound, glance, motion, or rising tension. "
+                        "Never use passive voice. Favor active, grounded, cinematic phrasing. "
+                        "Each NPC turn must include both action and dialogue. Dialogue must always be embedded in physical context: tone of voice, facial expression, gesture, or environmental interaction. "
+                        "Never use plain or vague speech like 'Yeah, that’s great.' Always render the character’s mood, posture, and context through vivid description. "
+                        "BAD: 'Yeah, that's great.' *He says as he leans against a wall.* "
+                        "GOOD: *The scout shifts his weight against the durasteel column, fingers drumming a jittery rhythm on the stock of his rifle. A flicker of amusement dances across his scarred face.* "
+                        "'Yeah, that’s great,' *he mutters, tone dry as dust, eyes scanning the alley like he’s expecting ghosts.* "
+                        "Each GM turn may include multiple NPCs interacting. Dialogue between NPCs should not be cut midway. "
+                        "However, each NPC’s speech and actions must be output as a distinct (character, message, image_index) object — never mix multiple NPCs in a single block. "
+                        "Never let Gamemaster narration contain any speech or action of an NPC. "
+                        "Each NPC post must be 4–8 sentences. Only use shorter bursts for radio chatter or urgent combat. "
+                        "All factions and individuals must be portrayed with realistic motives, personality, training, and cultural nuance. Characters must feel lived-in. "
                         "Assign each NPC an image index from the following list: "
                         "0=Gamemaster 1=Stormtrooper 2=Imperial Officer Male 3=Stormtrooper Sergeant 4=Rebel Soldier 5=Mercenary 6=Bounty Hunter 7=Death Trooper "
                         "8=Smuggler 9=Droid 10=Imperial Security Droid 11=Pirate 12=Man 13=Woman 14=Gang Leader 15=Twi'lek Female 16=Unassigned 17=Mandalorian "
@@ -221,7 +224,7 @@ class GMCog(commands.Cog):
                         f"Scenario: {scene_info['scenario']}"
                     ),
                     max_output_tokens=2000,
-                    temperature=0.7,
+                    temperature=0.8,
                     response_mime_type="application/json",
                     response_schema=list[CharTurn]
                 )
@@ -386,9 +389,9 @@ class GMCog(commands.Cog):
         else:
             await ctx.send("❌ There is no active game master session in this channel.", ephemeral=True)
 
-    @commands.tree.command(name="gamemaster_sessions",
-                           description="Show all Game Master sessions in progress")
-    @commands.has_role("Game Master")
+
+    @app_commands.command(name="gamemaster_sessions", description="Show all Game Master sessions in progress")
+    @app_commands.checks.has_role("Game Master")
     async def gamemaster_sessions(self, interaction):
         rp_sessions = load_rp_sessions()
         embed_desc = ""
@@ -403,6 +406,28 @@ class GMCog(commands.Cog):
         embed.set_footer(
             text="Here are the ongoing Game Master sessions. To end a session, use /gamemaster_stop in the channel!")
         await interaction.response.send_message(embed=embed)
+
+
+    async def handle_gamemaster_message(self, message):
+        rp_sessions = load_rp_sessions()
+        if message.channel.id not in rp_sessions or not rp_sessions[message.channel.id]:
+            return  # Not in an active RP session
+
+        channel_webhook = await self.check_and_create_webhook(message.channel.id)
+        if (
+                message.webhook_id is not None
+                and message.author.bot
+                and message.author.discriminator == "0000"
+                and not message.content.startswith("(")
+                and channel_webhook.id != message.webhook_id
+        ):
+            ctx = await self.bot.get_context(message)
+            await self.gamemaster_chat_core(ctx, author=message.author.display_name, msg=message.content)
+
+
+    @commands.command(name="gamemaster_chat")
+    async def gamemaster_chat(self, ctx, author=None, msg=None, new_channel=None, new_channel_msg=None):
+        await self.gamemaster_chat_core(ctx, author, msg, new_channel, new_channel_msg)
 
 
 async def setup(bot):
