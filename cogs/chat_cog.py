@@ -94,12 +94,12 @@ class ChatCog(commands.Cog):
         model_input = []
         if summary:
             model_input.append(types.Content(
-                role="system",
+                role="user",
                 parts=[types.Part.from_text(text=f"Summary of past details of chat:\n{summary.strip()}")]
             ))
         model_input.extend(recent)
         try:
-            async with ctx.typing():
+            async with ctx.channel.typing():
                 response = client.models.generate_content(
                     model=MODEL,
                     contents=model_input,

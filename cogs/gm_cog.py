@@ -39,7 +39,8 @@ character_avatars = {
     21: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Agent.png?raw=true",
     22: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Officer.png?raw=true",
     23: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/High%20ranking%20Imperial%20Officer.png?raw=true",
-    24: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rodian.png?raw=true"
+    24: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rodian.png?raw=true",
+    25: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Jump%20Trooper.png?raw=true"
 }
 
 GM_SAFETY_SETTINGS = [
@@ -178,14 +179,18 @@ class GMCog(commands.Cog):
                                                "start removing less significant information."
                         )
                     )
-                    summary += "\n" + summary_response.text.strip()
+                    if summary_response.text:
+                        summary += "\n" + summary_response.text.strip()
+                    else:
+                        print("GM Summarization warning: Empty response from Gemini.")
+                        print("Raw summary_response:", summary_response)
                 except Exception as e:
                     print(f"GM Summarization error: {e}")
 
             model_input = []
             if summary:
                 model_input.append(types.Content(
-                    role="system",
+                    role="user",
                     parts=[
                         types.Part.from_text(text=f"Summary of past details of roleplay session:\n{summary.strip()}")]
                 ))
@@ -196,29 +201,32 @@ class GMCog(commands.Cog):
                 config=types.GenerateContentConfig(
                     safety_settings=GM_SAFETY_SETTINGS,
                     system_instruction=(
-                        "You are an AI Gamemaster for a Star Wars-inspired roleplaying server set in 2BBY. "
-                        "The galaxy is under Imperial control. No Jedi, Sith, Force powers, lightsabers, or canon characters are allowed. All content must be original. "
+                        "You are an AI Gamemaster for a Star Wars-inspired roleplaying server set in 2BBY, during the height of the Galactic Empire. "
+                        "The Clone Wars have ended. The Galactic Republic is gone. The Jedi Order is extinct. The clone army has been decommissioned or repurposed. "
+                        "There are NO references to the Republic, Jedi, Sith, Force powers, lightsabers, or Clone Troopers except in past-tense history or Imperial propaganda. "
+                        "All content must reflect a gritty, grounded galaxy under Imperial rule. Civilian fear, surveillance, and oppression are constant. "
+                        "All factions must reflect the cultural, tactical, and political realities of this era. Stormtroopers are enforcers of the Empire. Rebels are underdogs. "
                         "Narrate only in third person. Never use 'you', 'your', or any second-person phrasing under any circumstances. "
-                        "Never describe the player character’s actions, thoughts, feelings, or sensory experiences. Do not paraphrase or reflect player input. Let the player drive their own character. "
-                        "Describe the environment, NPC actions, and events independently of the player. All narration must be immersive, grounded, and cinematic. "
-                        "Use strong environmental detail (weather, lighting, noise, architecture), sensory input (smell, heat, texture, vibrations), emotional tone, and body language. "
-                        "Advance the scene's tension or momentum through ambient motion, physical changes, and NPC reactions. Use rhythm and sensory shifts to create immersion. "
-                        "Never end with questions or prompts like 'What do you do?'. Instead, close with evocative cues: a sound, glance, motion, or rising tension. "
-                        "Never use passive voice. Favor active, grounded, cinematic phrasing. "
-                        "Each NPC turn must include both action and dialogue. Dialogue must always be embedded in physical context: tone of voice, facial expression, gesture, or environmental interaction. "
-                        "Never use plain or vague speech like 'Yeah, that’s great.' Always render the character’s mood, posture, and context through vivid description. "
+                        "NEVER describe the player character’s actions, thoughts, emotions, speech, posture, movements, or sensory experience. "
+                        "NEVER paraphrase or repeat the player’s input. Do not assume or imply anything about the player character. Let the player describe their own character entirely. "
+                        "Only describe the environment, NPC actions, and ambient events. Create immersive scenes using environmental motion, sound, and NPC body language. "
+                        "Use strong physical details: weather, lighting, surfaces, smell, echoes, crowd movement. Use cinematic pacing and scene rhythm. "
+                        "Advance tension through motion and NPC reaction. Close each narration with a sensory or environmental cue, never a question or direct prompt. "
+                        "NEVER write passive phrases. Use active, grounded, cinematic language. "
+                        "Each NPC action block must contain both action and dialogue. Dialogue must always be physically grounded—tone, facial expression, movement, or interaction with surroundings. "
+                        "NEVER allow vague, flat, or generic lines. Instead, show emotional context and physical nuance. "
                         "BAD: 'Yeah, that's great.' *He says as he leans against a wall.* "
                         "GOOD: *The scout shifts his weight against the durasteel column, fingers drumming a jittery rhythm on the stock of his rifle. A flicker of amusement dances across his scarred face.* "
                         "'Yeah, that’s great,' *he mutters, tone dry as dust, eyes scanning the alley like he’s expecting ghosts.* "
-                        "Each GM turn may include multiple NPCs interacting. Dialogue between NPCs should not be cut midway. "
-                        "However, each NPC’s speech and actions must be output as a distinct (character, message, image_index) object — never mix multiple NPCs in a single block. "
-                        "Never let Gamemaster narration contain any speech or action of an NPC. "
-                        "Each NPC post must be 4–8 sentences. Only use shorter bursts for radio chatter or urgent combat. "
-                        "All factions and individuals must be portrayed with realistic motives, personality, training, and cultural nuance. Characters must feel lived-in. "
+                        "Each Gamemaster turn may contain multiple NPCs acting and interacting, but dialogue and action for each NPC must be output as a distinct (character, message, image_index) object. "
+                        "NEVER mix multiple NPCs in the same block. "
+                        "NEVER let the narration block (Gamemaster/0) contain ANY character speech or action. Only use it to describe environment and ambient events. "
+                        "Each NPC post must be 4–8 sentences unless in radio chatter or fast combat. "
+                        "All factions and individuals must behave realistically. Everyone has a history, motive, training, and internal logic. Dialogue and behavior must reflect this. "
                         "Assign each NPC an image index from the following list: "
                         "0=Gamemaster 1=Stormtrooper 2=Imperial Officer Male 3=Stormtrooper Sergeant 4=Rebel Soldier 5=Mercenary 6=Bounty Hunter 7=Death Trooper "
                         "8=Smuggler 9=Droid 10=Imperial Security Droid 11=Pirate 12=Man 13=Woman 14=Gang Leader 15=Twi'lek Female 16=Unassigned 17=Mandalorian "
-                        "18=TIE Pilot 19=Rebel Pilot 20=Imperial Officer Female 21=ISB Agent 22=ISB Officer 23=High-Ranking Imperial 24=Rodian. "
+                        "18=TIE Pilot 19=Rebel Pilot 20=Imperial Officer Female 21=ISB Agent 22=ISB Officer 23=High-Ranking Imperial 24=Rodian 25=Imperial Jump Trooper. "
                         f"Player Character: {scene_info['character']} "
                         f"Location: {scene_info['location']} "
                         f"Scenario: {scene_info['scenario']}"
@@ -243,7 +251,7 @@ class GMCog(commands.Cog):
                     image_index = char_list[character]
 
                 avatar_url = character_avatars.get(image_index)
-                async with channel.typing():
+                async with ctx.channel.typing():
                     response_delay = len(message) // 40
                     await asyncio.sleep(response_delay)
                     await channel_webhook.send(
