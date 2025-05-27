@@ -8,7 +8,7 @@ from pydantic import BaseModel
 import os
 from utils import *
 
-MAX_GM_RECENT = 15
+MAX_GM_RECENT = 20
 SUMMARIZE_GM_BATCH = 7
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
@@ -173,12 +173,20 @@ class GMCog(commands.Cog):
                         config=types.GenerateContentConfig(
                             max_output_tokens=20000,
                             temperature=0.3,
-                            system_instruction="With the following roleplay history, make a brief and concise summary for "
-                                               "your own reference with details to remember to facilitate accurate the player's roleplay with you being the Gamemaster. "
-                                               "If the summary gets too long,"
-                                               "start removing less significant information."
+                            system_instruction=(
+                                "Summarize the following roleplay history in a concise and structured manner to help you, the Gamemaster, "
+                                "accurately follow the ongoing story. Focus on:\n"
+                                "- Key events and what has happened so far\n"
+                                "- The current objectives and mission progress\n"
+                                "- Locations of characters and their groupings\n"
+                                "- Relevant NPCs, their roles, physical appearances, gender and interactions\n"
+                                "- Any important details that should be remembered for continuity\n\n"
+                                "If the summary becomes too long, prioritize main plot points, character positions, and mission-critical details, "
+                                "while omitting minor or repetitive interactions."
+                            )
                         )
                     )
+
                     if summary_response.text:
                         summary += "\n" + summary_response.text.strip()
                     else:
