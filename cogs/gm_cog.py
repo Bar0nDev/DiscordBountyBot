@@ -8,10 +8,8 @@ from pydantic import BaseModel
 import os
 from utils import *
 
-# MAX_GM_RECENT = 40
-# SUMMARIZE_GM_BATCH = 25
-MAX_GM_RECENT = 10
-SUMMARIZE_GM_BATCH = 6
+MAX_GM_RECENT = 35
+SUMMARIZE_GM_BATCH = 17
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
@@ -220,7 +218,7 @@ class GMCog(commands.Cog):
                 model_input.append(types.Content(
                     role="user",
                     parts=[
-                        types.Part.from_text(text=f"Summary of past details of roleplay session:\n{summary.strip()}")]
+                        types.Part.from_text(text=f"Summary of previous details of roleplay session:\n{summary.strip()}")]
                 ))
             model_input.extend(recent)
             response = client.models.generate_content(
