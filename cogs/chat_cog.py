@@ -7,8 +7,10 @@ import os
 import pickle
 from utils import *
 
-MAX_RECENT = 30
-SUMMARIZE_BATCH = 15
+# MAX_RECENT = 30
+# SUMMARIZE_BATCH = 15
+MAX_RECENT = 10
+SUMMARIZE_BATCH = 7
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
@@ -71,23 +73,40 @@ class ChatCog(commands.Cog):
             to_summarize = recent[:SUMMARIZE_BATCH]
             recent = recent[SUMMARIZE_BATCH:]
             try:
-                summary_prompt = []
-                if summary:
-                    summary_prompt.append(types.Content(role='user', parts=[types.Part.from_text(text=summary)]))
-                summary_prompt.extend(to_summarize)
+                chat_log = ""
+                for msg in to_summarize:
+                    author = "USER" if msg.role == "user" else "BOT"
+                    chat_log += f"{author}: {msg.parts[0].text.strip()}\n"
+
+                summary_prompt = [
+                    types.Content(
+                        role='model',
+                        parts=[types.Part.from_text(text=
+                            "Summarize only key, relevant details from the new chat log into the existing summary. Keep it short and information-dense. Remove fluff. Prioritize character preferences, lore-relevant exchanges, and personality dynamics. Avoid restating things already summarized unless there’s new nuance."
+                        )]
+                    ),
+                    types.Content(
+                        role='user',
+                        parts=[types.Part.from_text(text=
+                            f"**Existing summary:**\n{summary.strip()}\n\n**New chat log:**\n{chat_log.strip()}"
+                        )]
+                    )
+                ]
 
                 summary_response = client.models.generate_content(
                     model=MODEL,
                     contents=summary_prompt,
                     config=types.GenerateContentConfig(
-                        max_output_tokens=10000,
-                        temperature=0.3,
-                        system_instruction="With the following chat history, make a brief and concise summary for "
-                                           "your own reference with only important or notable details. If the summary gets too long,"
-                                           "start removing less significant information."
+                        max_output_tokens=2000,
+                        temperature=0.7,
+                        system_instruction="You are compressing and updating a persistent summary of a character's "
+                                           "dialogue. Be extremely concise. Eliminate repetition, irrelevant fluff, "
+                                           "and generic pleasantries. Prioritize memorable actions, stated preferences, "
+                                           "and meaningful exchanges relevant to the chat. "
+                                           "Aim for brevity without losing nuance."
                     )
                 )
-                summary += "\n" + summary_response.text.strip()
+                summary = summary_response.text.strip()
             except Exception as e:
                 print(f"Summarization error: {e}")
 
@@ -95,7 +114,7 @@ class ChatCog(commands.Cog):
         if summary:
             model_input.append(types.Content(
                 role="user",
-                parts=[types.Part.from_text(text=f"Summary of past details of chat:\n{summary.strip()}")]
+                parts=[types.Part.from_text(text=f"Summary of previous details of chat:\n{summary.strip()}")]
             ))
         model_input.extend(recent)
         try:
