@@ -8,40 +8,46 @@ from pydantic import BaseModel
 import os
 from utils import *
 
-MAX_GM_RECENT = 20
-SUMMARIZE_GM_BATCH = 7
+# MAX_GM_RECENT = 40
+# SUMMARIZE_GM_BATCH = 25
+MAX_GM_RECENT = 10
+SUMMARIZE_GM_BATCH = 6
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
 
-character_avatars = {
-    0: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gamemaster.png?raw=true",
-    1: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Stormtrooper.png?raw=true",
-    2: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Officer%20Male.png?raw=true",
-    3: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Stormtrooper%20Sergeant.png?raw=true",
-    4: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rebel.png?raw=true",
-    5: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Mercenary.png?raw=true",
-    6: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Bounty%20Hunter.png?raw=true",
-    7: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Death%20Trooper.png?raw=true",
-    8: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Smuggler.png?raw=true",
-    9: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Droid.png?raw=true",
-    10: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Security%20Droid.png?raw=true",
-    11: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Pirate.png?raw=true",
-    12: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Man.png?raw=true",
-    13: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Woman.png?raw=true",
-    14: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gang%20Leader.png?raw=true",
-    15: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Twilek%20F.png?raw=true",
-    16: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Unassigned.png?raw=true",
-    17: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Mandalorian.png?raw=true",
-    18: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/TIE%20Pilot.png?raw=true",
-    19: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rebel%20Pilot.png?raw=true",
-    20: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Officer%20F.png?raw=true",
-    21: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Agent.png?raw=true",
-    22: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Officer.png?raw=true",
-    23: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/High%20ranking%20Imperial%20Officer.png?raw=true",
-    24: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rodian.png?raw=true",
-    25: "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Jump%20Trooper.png?raw=true"
-}
+character_avatars = [
+    ("Gamemaster", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gamemaster.png?raw=true"),
+    ("Stormtrooper", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Stormtrooper.png?raw=true"),
+    ("Imperial Officer Male", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Officer%20Male.png?raw=true"),
+    ("Stormtrooper Sergeant", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Stormtrooper%20Sergeant.png?raw=true"),
+    ("Rebel Soldier", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rebel.png?raw=true"),
+    ("Mercenary", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Mercenary.png?raw=true"),
+    ("Bounty Hunter", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Bounty%20Hunter.png?raw=true"),
+    ("Death Trooper", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Death%20Trooper.png?raw=true"),
+    ("Smuggler", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Smuggler.png?raw=true"),
+    ("Droid", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Droid.png?raw=true"),
+    ("Imperial Security Droid", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Security%20Droid.png?raw=true"),
+    ("Pirate", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Pirate.png?raw=true"),
+    ("Man", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Man.png?raw=true"),
+    ("Woman", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Woman.png?raw=true"),
+    ("Gang Leader", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gang%20Leader.png?raw=true"),
+    ("Twi'lek Female", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Twilek%20F.png?raw=true"),
+    ("Unassigned", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Unassigned.png?raw=true"),
+    ("Mandalorian", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Mandalorian.png?raw=true"),
+    ("TIE Pilot", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/TIE%20Pilot.png?raw=true"),
+    ("Rebel Pilot", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rebel%20Pilot.png?raw=true"),
+    ("Imperial Officer Female", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Officer%20F.png?raw=true"),
+    ("ISB Agent", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Agent.png?raw=true"),
+    ("ISB Officer", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Officer.png?raw=true"),
+    ("High-Ranking Imperial", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/High%20ranking%20Imperial%20Officer.png?raw=true"),
+    ("Rodian", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rodian.png?raw=true"),
+    ("Imperial Jump Trooper", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Jump%20Trooper.png?raw=true"),
+]
+
+avatar_index_guide = " ".join(
+    f"{i}={name}" for i, (name, _) in enumerate(character_avatars)
+)
 
 GM_SAFETY_SETTINGS = [
     types.SafetySetting(
@@ -87,6 +93,7 @@ class GMCog(commands.Cog):
             bot_webhook = await channel.create_webhook(name="R0-U41 Hook")
         return bot_webhook
 
+
     @commands.hybrid_command(name="gamemaster_start", description="Use the power of AI for your roleplay experience!")
     @app_commands.describe(
         character="Briefly enter important details about the character (Allegiance, name/s, species, etc.).",
@@ -128,6 +135,7 @@ class GMCog(commands.Cog):
             await ctx.send(
                 "A scenario is already in progress. Finish the current mission with /gamemaster_stop or change scenario location.")
 
+
     @commands.command()
     async def gamemaster_chat_core(self, ctx, author=None, msg=None, new_channel=None, new_channel_msg=None):
         rp_sessions = load_rp_sessions()
@@ -159,24 +167,40 @@ class GMCog(commands.Cog):
             ))
 
             if len(recent) > MAX_GM_RECENT:
+                print("LIMIT REACHED=======")
                 to_summarize = recent[:SUMMARIZE_GM_BATCH]
                 recent = recent[SUMMARIZE_GM_BATCH:]
                 try:
-                    summary_prompt = []
-                    if summary:
-                        summary_prompt.append(types.Content(role='user', parts=[types.Part.from_text(text=summary)]))
-                    summary_prompt.extend(to_summarize)
+                    chat_log = ""
+                    for msg in to_summarize:
+                        author = "PLAYER" if msg.role == "user" else "NPC"
+                        chat_log += f"{author}: {msg.parts[0].text.strip()}\n"
+
+                    summary_prompt = [
+                        types.Content(
+                            role='model',
+                            parts=[types.Part.from_text(text=
+                                                        "Summarize only relevant details from the roleplay session so far into the existing summary. Keep it information-dense and concise. Remove fluff. Avoid restating things already summarized unless there’s new nuance."
+                                                        )]
+                        ),
+                        types.Content(
+                            role='user',
+                            parts=[types.Part.from_text(text=
+                                                        f"**Existing summary:**\n{summary.strip()}\n\n**New chat log:**\n{chat_log.strip()}"
+                                                        )]
+                        )
+                    ]
 
                     summary_response = client.models.generate_content(
                         model=MODEL,
                         contents=summary_prompt,
                         config=types.GenerateContentConfig(
                             max_output_tokens=20000,
-                            temperature=0.3,
+                            temperature=0.5,
                             system_instruction=(
                                 "Summarize the following roleplay history in a concise and structured manner to help you, the Gamemaster, "
                                 "accurately follow the ongoing story. Focus on:\n"
-                                "- Key events and what has happened so far\n"
+                                "- A list of everything that has happened so far in order of events\n"
                                 "- The current objectives and mission progress\n"
                                 "- Locations of characters and their groupings\n"
                                 "- Relevant NPCs, their roles, physical appearances, gender and interactions\n"
@@ -186,12 +210,8 @@ class GMCog(commands.Cog):
                             )
                         )
                     )
-
-                    if summary_response.text:
-                        summary += "\n" + summary_response.text.strip()
-                    else:
-                        print("GM Summarization warning: Empty response from Gemini.")
-                        print("Raw summary_response:", summary_response)
+                    summary = summary_response.text.strip()
+                    print("Summary so far: ", summary)
                 except Exception as e:
                     print(f"GM Summarization error: {e}")
 
@@ -232,9 +252,7 @@ class GMCog(commands.Cog):
                         "Each NPC post must be 4–8 sentences unless in radio chatter or fast combat. "
                         "All factions and individuals must behave realistically. Everyone has a history, motive, training, and internal logic. Dialogue and behavior must reflect this. "
                         "Assign each NPC an image index from the following list: "
-                        "0=Gamemaster 1=Stormtrooper 2=Imperial Officer Male 3=Stormtrooper Sergeant 4=Rebel Soldier 5=Mercenary 6=Bounty Hunter 7=Death Trooper "
-                        "8=Smuggler 9=Droid 10=Imperial Security Droid 11=Pirate 12=Man 13=Woman 14=Gang Leader 15=Twi'lek Female 16=Unassigned 17=Mandalorian "
-                        "18=TIE Pilot 19=Rebel Pilot 20=Imperial Officer Female 21=ISB Agent 22=ISB Officer 23=High-Ranking Imperial 24=Rodian 25=Imperial Jump Trooper. "
+                        f"{avatar_index_guide} "
                         f"Player Character: {scene_info['character']} "
                         f"Location: {scene_info['location']} "
                         f"Scenario: {scene_info['scenario']}"
@@ -258,7 +276,10 @@ class GMCog(commands.Cog):
                 else:
                     image_index = char_list[character]
 
-                avatar_url = character_avatars.get(image_index)
+                try:
+                    avatar_url = character_avatars[image_index][1]
+                except IndexError:
+                    avatar_url = None
                 async with ctx.channel.typing():
                     response_delay = len(message) // 40
                     await asyncio.sleep(response_delay)
