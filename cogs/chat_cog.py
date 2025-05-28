@@ -7,10 +7,8 @@ import os
 import pickle
 from utils import *
 
-# MAX_RECENT = 30
-# SUMMARIZE_BATCH = 15
-MAX_RECENT = 10
-SUMMARIZE_BATCH = 7
+MAX_RECENT = 35
+SUMMARIZE_BATCH = 20
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
