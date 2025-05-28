@@ -8,8 +8,8 @@ from pydantic import BaseModel
 import os
 from utils import *
 
-MAX_GM_RECENT = 35
-SUMMARIZE_GM_BATCH = 17
+MAX_GM_RECENT = 40
+SUMMARIZE_GM_BATCH = 30
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
@@ -178,13 +178,18 @@ class GMCog(commands.Cog):
                         types.Content(
                             role='model',
                             parts=[types.Part.from_text(text=
-                                                        "Summarize only relevant details from the roleplay session so far into the existing summary. Keep it information-dense and concise. Remove fluff. Avoid restating things already summarized unless there’s new nuance."
+                                                        "Add new, relevant details from the latest roleplay log to "
+                                                        "the existing summary. Do NOT remove or rewrite any existing "
+                                                        "parts unless there's a factual update or clearer detail. "
+                                                        "Only append or enhance. Keep it information-dense and "
+                                                        "chronological. Avoid fluff."
                                                         )]
                         ),
                         types.Content(
                             role='user',
                             parts=[types.Part.from_text(text=
-                                                        f"**Existing summary:**\n{summary.strip()}\n\n**New chat log:**\n{chat_log.strip()}"
+                                                        f"**Existing summary:**\n{summary.strip()}\n\n**New chat "
+                                                        f"log:**\n{chat_log.strip()}"
                                                         )]
                         )
                     ]
@@ -196,15 +201,12 @@ class GMCog(commands.Cog):
                             max_output_tokens=20000,
                             temperature=0.5,
                             system_instruction=(
-                                "Summarize the following roleplay history in a concise and structured manner to help you, the Gamemaster, "
-                                "accurately follow the ongoing story. Focus on:\n"
-                                "- A list of everything that has happened so far in order of events\n"
-                                "- The current objectives and mission progress\n"
-                                "- Locations of characters and their groupings\n"
-                                "- Relevant NPCs, their roles, physical appearances, gender and interactions\n"
-                                "- Any important details that should be remembered for continuity\n\n"
-                                "If the summary becomes too long, prioritize main plot points, character positions, and mission-critical details, "
-                                "while omitting minor or repetitive interactions."
+                                "Summarize the following roleplay log as a clear, chronological story. "
+                                "Describe the events that happened, who did what, and any notable NPCs. "
+                                "Include relevant character traits, relationships, and outcomes of each scene. "
+                                "Treat this as the 'story so far' — like you're writing a recap for someone who missed earlier sessions.\n\n"
+                                "Do NOT speculate or include current goals. Just narrate the events that happened, in order.\n"
+                                "Only update or append to the summary. Never remove prior events unless they are contradicted or overwritten by new information in the chat log."
                             )
                         )
                     )
@@ -217,8 +219,14 @@ class GMCog(commands.Cog):
             if summary:
                 model_input.append(types.Content(
                     role="user",
-                    parts=[
-                        types.Part.from_text(text=f"Summary of previous details of roleplay session:\n{summary.strip()}")]
+                    parts=[types.Part.from_text(
+                        text=(
+                            "STORY SUMMARY — FOR CONTEXT ONLY\n"
+                            "The following is a recap of events that have already happened in the roleplay.\n"
+                            "This summary is NOT a current turn, input, or action. It is background context to help you stay consistent:\n\n"
+                            f"{summary.strip()}"
+                        )
+                    )]
                 ))
             model_input.extend(recent)
             response = client.models.generate_content(
