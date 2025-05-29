@@ -1,10 +1,9 @@
 import asyncio
-import discord
 from discord.ext import commands
 from google import genai
 from google.genai import types
 import os
-import pickle
+import random
 from utils import *
 
 MAX_RECENT = 35
@@ -56,8 +55,6 @@ class ChatCog(commands.Cog):
                 chat_sessions = pickle.load(dbfile)
                 summary = chat_sessions.get("summary", "")
                 recent = chat_sessions.get('recent', [])
-                allowed_roles = {"user", "model"}
-                recent = [msg for msg in recent if msg.role in allowed_roles]
         except (FileNotFoundError, EOFError):
             summary = ""
             recent = []
@@ -117,6 +114,7 @@ class ChatCog(commands.Cog):
                 parts=[types.Part.from_text(text=f"Summary of previous details of chat:\n{summary.strip()}")]
             ))
         model_input.extend(recent)
+
         try:
             async with ctx.channel.typing():
                 response = client.models.generate_content(
@@ -142,18 +140,21 @@ class ChatCog(commands.Cog):
                         temperature=0.8
                     )
                 )
-                gen_delay = len(response.text) // 70
+                thinking_time = random.uniform(1, 3)
+                typing_time = len(response.text) * random.uniform(0.25, 0.35)
+
+                response_delay = thinking_time + typing_time
                 chunks = [response.text[i:i + 2000] for i in
                           range(0, len(response.text), 2000)]
-                await asyncio.sleep(gen_delay)
+                await asyncio.sleep(response_delay)
                 for chunk in chunks:
                     await ctx.send(chunk)
+
 
             recent.append(types.Content(
                 role='model',
                 parts=[types.Part.from_text(text=response.text)]
             ))
-
             with open("chat_sessions.pk1", "wb") as file:
                 pickle.dump({'summary': summary, 'recent': recent}, file)
         except Exception as e:

@@ -6,6 +6,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 import os
+import random
 from utils import *
 
 MAX_GM_RECENT = 40
@@ -287,7 +288,10 @@ class GMCog(commands.Cog):
                 except IndexError:
                     avatar_url = None
                 async with ctx.channel.typing():
-                    response_delay = len(message) // 40
+                    thinking_time = random.uniform(1, 3)
+                    typing_time = len(message) * random.uniform(0.25, 0.35)
+                    response_delay = thinking_time + typing_time
+
                     await asyncio.sleep(response_delay)
                     await channel_webhook.send(
                         content=message,
