@@ -56,6 +56,8 @@ class ChatCog(commands.Cog):
                 chat_sessions = pickle.load(dbfile)
                 summary = chat_sessions.get("summary", "")
                 recent = chat_sessions.get('recent', [])
+                allowed_roles = {"user", "model"}
+                recent = [msg for msg in recent if msg.role in allowed_roles]
         except (FileNotFoundError, EOFError):
             summary = ""
             recent = []
