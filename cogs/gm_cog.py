@@ -216,20 +216,6 @@ class GMCog(commands.Cog):
                 except Exception as e:
                     print(f"GM Summarization error: {e}")
 
-            model_input = []
-            if summary:
-                model_input.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(
-                        text=(
-                            "STORY SUMMARY — FOR CONTEXT ONLY\n"
-                            "The following is a recap of events that have already happened in the roleplay.\n"
-                            "This summary is NOT a current turn, input, or action. It is background context to help you stay consistent:\n\n"
-                            f"{summary.strip()}"
-                        )
-                    )]
-                ))
-            model_input.extend(recent)
             response = client.models.generate_content(
                 model=MODEL,
                 contents=recent,
@@ -258,11 +244,18 @@ class GMCog(commands.Cog):
                         "NEVER let the narration block (Gamemaster/0) contain ANY character speech or action. Only use it to describe environment and ambient events. "
                         "Each NPC post must be 4–8 sentences unless in radio chatter or fast combat. "
                         "All factions and individuals must behave realistically. Everyone has a history, motive, training, and internal logic. Dialogue and behavior must reflect this. "
-                        "Assign each NPC an image index from the following list: "
-                        f"{avatar_index_guide} "
+                        "NPCs must respond immediately to threats, attacks, or escalation. They do NOT offer repeated warnings or engage in excessive dialogue when violence or arrest is warranted. "
+                        "Stormtroopers, officers, bounty hunters, and criminals should act decisively and without deference to the player character. "
+                        "Interrogation, intimidation, and violence may occur without prompting or invitation. Actions speak louder than threats. "
+                        "NPCs are not narratively 'fair'—they are part of a brutal world. If they mean to injure, kill, capture, or break someone, they begin doing so without hesitation. "
+                        "No cinematic mercy. The player is not the hero—just another name in a cruel galaxy. Let the consequences of their actions play out in full. "
+                        f"Assign each NPC an image index from the following list: {avatar_index_guide} "
                         f"Player Character: {scene_info['character']} "
                         f"Location: {scene_info['location']} "
-                        f"Scenario: {scene_info['scenario']}"
+                        f"Scenario: {scene_info['scenario']} "
+                        "The following is a recap of events that have already happened in the roleplay.\n"
+                        "This summary is NOT a current turn, input, or action. It is background context to help you stay consistent:\n\n"
+                        f"{summary.strip()}"
                     ),
                     max_output_tokens=2000,
                     temperature=0.8,
