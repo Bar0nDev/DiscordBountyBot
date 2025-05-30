@@ -3,7 +3,6 @@ from discord.ext import commands
 from google import genai
 from google.genai import types
 import os
-import random
 from utils import *
 
 MAX_RECENT = 35
@@ -140,10 +139,9 @@ class ChatCog(commands.Cog):
                         temperature=0.8
                     )
                 )
-                thinking_time = random.uniform(1, 3)
-                typing_time = len(response.text) * random.uniform(0.25, 0.35)
+                typing_time = len(response.text) * 0.03
 
-                response_delay = thinking_time + typing_time
+                response_delay = typing_time
                 chunks = [response.text[i:i + 2000] for i in
                           range(0, len(response.text), 2000)]
                 await asyncio.sleep(response_delay)
