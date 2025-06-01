@@ -4,6 +4,42 @@ from discord.ext import commands
 from db.models import Bounties
 from discord import app_commands
 from db.sessions import Session
+from google import genai
+from google.genai import types
+import os
+from pydantic import BaseModel
+
+
+client = genai.Client(api_key=os.getenv("API_KEY"))
+MODEL = "gemini-2.0-flash"
+
+
+BOUNTY_SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+]
+
+
+class BountyTemplate(BaseModel):
+    target: str
+    description: str
+    reward: int
+    client: str
+
 
 class BountyCog(commands.Cog):
     def __init__(self, bot):
@@ -53,6 +89,7 @@ class BountyCog(commands.Cog):
             except asyncio.TimeoutError:
                 await ctx.send("Confirmation timed out.")
         session.close()
+
 
     @commands.hybrid_command(name="bounty_info", description="Show info for specified bounty ID (1-10).")
     @app_commands.describe(b_id="ID of bounty")
@@ -120,6 +157,62 @@ class BountyCog(commands.Cog):
                     await ctx.send("Canceled request.")
             except asyncio.TimeoutError:
                 await ctx.send("Confirmation timed out.")
+        session.close()
+
+
+    @app_commands.command(name="generate_bounties", description="Generate bounties")
+    @app_commands.describe(amount="Number of bounties to generate (default: Fills up bounty board to 10 total bounties)")
+    async def generate_bounties(self, interaction: discord.Interaction, amount: int = 10):
+        await interaction.response.defer()
+        session = Session()
+        bounties = session.query(Bounties).all()
+        bounty_count = len(bounties)
+        if bounty_count < 10:
+            if amount >= 10:
+                num_to_create = 10 - bounty_count
+            else:
+                num_to_create = amount
+            prompt = (
+                f"You are to generate {num_to_create} Star Wars-themed bounties for specific individuals. No canon characters like Luke Skywalker, etc. "
+                f"These bounties appear on an encrypted black-market network or seedy bounty hunter board. "
+                f"The setting is 2BBY, during the height of the Empire. This is a grounded, gritty galaxy. No Jedi, no Force, no lightsabers.\\n\\n"
+                f"Each bounty is for a specific target. These individuals are wanted for various reasons — betrayal, theft, desertion, murder, smuggling, sabotage, or other criminal or political offenses.\\n\\n"
+                f"For each bounty, include the following:\\n"
+                f"1. Target – A name or codename. Can be realistic, alias-based, or underworld-styled. Should sound like a Star Wars character (e.g., 'Vex Darrow', 'Kordo the Red', 'TK-1984', 'Slick', 'Nal Tresh').\\n"
+                f"2. Description – 3–6 sentences. Written as if posted to an illicit network. Describe the target's crime, affiliations, last known location, danger level, or unique info. Do NOT use second-person language. This is a listing meant for hardened bounty hunters or syndicate enforcers.\\n"
+                f"3. Reward – A numeric credit value (between 500–13,000) based on how high-profile or dangerous the bounty is. Use your judgment. Small-time targets can be under 1,000 credits; major threats or factional figures can command 10,000+.\\n"
+                f"4. Client – The name or alias of the individual, faction, or anonymous source who posted the bounty.\\n\\n"
+                f"Use an appropriately gritty, criminal tone — think dark holonet terminal postings. Be terse but evocative. Only use specific planetary names if essential; otherwise refer to regions like 'Outer Rim', 'Mid Rim', 'Expansion Region', etc. Avoid exposition or polite phrasing — this is underworld business."
+            )
+
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=["Generate Star Wars themed bounties"],
+                config=types.GenerateContentConfig(
+                    safety_settings=BOUNTY_SAFETY_SETTINGS,
+                    system_instruction=prompt,
+                    response_mime_type="application/json",
+                    temperature=0.8,
+                    response_schema=list[BountyTemplate]
+                )
+            )
+
+            bounties_generated: list[BountyTemplate] = response.parsed
+            for bounty in bounties_generated:
+                new_bounty = Bounties(
+                    target=bounty.target,
+                    description=bounty.description,
+                    reward=bounty.reward,
+                    client=bounty.client
+                )
+                session.add(new_bounty)
+                session.commit()
+            await interaction.followup.send(f"🛠️ Generated {num_to_create} bounties for the bounty board...")
+
+        else:
+            await interaction.followup.send(
+                "❌ Bounty board is already complete. (10 bounties already registered).")
+
         session.close()
 
 

@@ -21,9 +21,9 @@ def run_discord_bot():
 
     @bot.event
     async def on_ready():
-        news_cog = bot.get_cog("NewsCog")
-        if news_cog:
-            await news_cog.handle_news_report()
+        # news_cog = bot.get_cog("NewsCog")
+        # if news_cog:
+        #     await news_cog.handle_news_report()
         await change_status()
         print(f"{bot.user} online")
 

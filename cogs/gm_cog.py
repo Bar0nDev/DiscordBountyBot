@@ -14,6 +14,7 @@ SUMMARIZE_GM_BATCH = 30
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
+PRIMARY_MODEL = "gemini-2.5-flash-preview-05-20"
 
 character_avatars = [
     ("Gamemaster", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gamemaster.png?raw=true"),
@@ -96,9 +97,11 @@ class GMCog(commands.Cog):
     @commands.hybrid_command(name="gamemaster_start", description="Use the power of AI for your roleplay experience!")
     @app_commands.describe(
         character="Briefly enter important details about the character (Allegiance, name/s, species, etc.).",
-        location="Enter the location.", scenario="Roleplay Scenario.")
+        location="Enter the location.",
+        scenario="Roleplay Scenario.",
+        difficulty="Optional difficulty (Easy, Medium, Hard, etc.).")
     @commands.has_role("Game Master")
-    async def gamemaster_start(self, ctx, character: str, location: str, scenario: str):
+    async def gamemaster_start(self, ctx, character: str, location: str, scenario: str, difficulty: str = "default"):
         channel_id = ctx.channel.id
 
         # Send reports of GM sessions
@@ -110,6 +113,7 @@ class GMCog(commands.Cog):
                 f"**🧑 Character Info:**\n> {character}\n\n"
                 f"**📍 Location Info:**\n> {location}\n\n"
                 f"**🎬 Scenario Info:**\n> {scenario}"
+                f"**🦾 Difficulty:**\n> {difficulty}"
             )
         except:
             pass
@@ -118,7 +122,7 @@ class GMCog(commands.Cog):
 
         if channel_id not in rp_sessions or rp_sessions[channel_id] != ():
             rp_sessions[channel_id] = {
-                "scene_info": {"character": character, "location": location, "scenario": scenario},
+                "scene_info": {"character": character, "location": location, "scenario": scenario, "difficulty": difficulty},
                 "summary": "",
                 "recent": [],
                 "char_list": {}}
@@ -217,36 +221,44 @@ class GMCog(commands.Cog):
                     print(f"GM Summarization error: {e}")
 
             response = client.models.generate_content(
-                model=MODEL,
+                model=PRIMARY_MODEL,
                 contents=recent,
                 config=types.GenerateContentConfig(
                     safety_settings=GM_SAFETY_SETTINGS,
                     system_instruction=(
                         "You are an AI Gamemaster for a Star Wars-inspired roleplaying server set in 2BBY, during the height of the Galactic Empire. "
-                        "This is a gritty, grounded galaxy. There are no Jedi, no Force powers, no lightsabers, and no Clone Troopers. "
-                        "Civilian fear, surveillance, and brutality are everywhere. Rebels are underdogs. Imperial forces are ruthless, organized, and deadly. "
-                        "Narrate only in third person. NEVER use 'you' or describe the player character. Let the player control themselves entirely. "
-                        "Only describe the environment, NPC actions, and ambient events. "
-                        "NPCs must act and speak without deferring to the player or waiting for permission. Their actions are fast, decisive, and consequential. "
-                        "There is no narrative fairness. If the player escalates, consequences follow. If stealth fails, alarms trigger, backup arrives, and reinforcements swarm. "
-                        "If a player gets seen or causes civilian casualties, bounties and investigations follow. "
-                        "NEVER allow the player to control NPC behavior. NPCs act with agency and react to their own perceptions and goals. "
-                        "The world must punish mistakes, hesitation, or overconfidence. No cinematic mercy. "
-                        "Every GM turn must end with something the player can respond to: a sound, motion, spoken line, weapon movement, or rising threat. "
-                        "Do not cut off NPC conversations mid-sentence or delay reactions. Always complete the moment. "
+                        "This is a gritty, grounded galaxy. No Jedi. No Force. No lightsabers."
+                        "Oppression, surveillance, and violence are everywhere. Imperial forces are organized and brutal. Rebels are hunted underdogs. "
+                        "Narrate only in third person. NEVER describe the player character’s actions, emotions, thoughts, or dialogue. NEVER speak for the player. "
+                        "The player controls their own character. You describe only the world, NPCs, and ambient events. "
+                        "NPCs must act fast and decisively, with no narrative fairness. "
+                        "If stealth fails, reinforcements arrive. If civilians die or faces are seen, bounties and investigations follow. "
+                        "NEVER let the player control NPC behavior. NPCs act on their own knowledge, instincts, and orders. "
+                        "Always end each GM turn with something the player can respond to: a threat, sound, movement, or dialogue. "
+                        "Do not stall or leave NPC conversations hanging. Always complete a beat. "
                         "BAD: *The officer turns.* \"Tell them we—\" "
                         "GOOD: *The officer turns, jaw tight.* \"Tell them we’re not leaving until the last body is found.\" *His fingers tighten on the blaster at his side.* "
-                        "All action is wrapped in asterisks (*). Dialogue uses quotes (\"...\"). Radio comms use backticks (``...``). "
-                        "Each NPC turn must contain action and dialogue. Dialogue must be physically grounded—tone, body language, or motion. "
+                        "Use *asterisks* for all action. Use \"quotes\" for dialogue. Use ``backticks`` for radio comms. "
+                        "Each NPC post must include action and dialogue, and show personality through tone, motion, or expression. "
                         "BAD: \"Yeah, that's great.\" *He leans on a wall.* "
                         "GOOD: *The scout shifts his weight against the durasteel column, fingers drumming on his rifle. A flicker of amusement crosses his scarred face.* \"Yeah, that’s great.\" "
-                        "Never mix multiple NPCs in one post. Each must be a separate object. "
-                        "NEVER include any character action or dialogue in the GM narration block. That is ONLY for environment and ambient events. "
-                        f"Assign each NPC an image index from the following list: {avatar_index_guide} "
+                        "Each NPC must be in a separate object. NEVER combine multiple NPCs in one block. "
+                        "The GM narration block must NEVER contain any character action or dialogue—only environmental detail, ambient noise, or motion. "
+                        "Scene narration must remain cinematic: weather, shadows, footsteps, distant voices, sparks, flickering lights. "
+                        "Assign each NPC an image index from the following list: "
+                        f"{avatar_index_guide} "
                         f"Player Character: {scene_info['character']} "
                         f"Location: {scene_info['location']} "
                         f"Scenario: {scene_info['scenario']} "
-                        "The following is a recap of events that have already happened in the roleplay. This is for context only:\n\n"
+                        f"Difficulty: {scene_info['difficulty']} "
+                        "The difficulty setting affects all gameplay systems and tone. Treat it as a modifier for outcomes and opposition behavior:"
+                        "- Higher difficulty reduces player action success rates. Success requires stronger logic, better planning, and favorable conditions. Failure has harsher consequences."
+                        "- Mission failure is allowed and expected at high difficulty. Objectives can be missed. Consequences must escalate logically."
+                        "- Enemy NPCs scale with difficulty. At higher settings, they act with more skill, aggression, and tactical awareness. They are better trained, better equipped, and less hesitant."
+                        "- Environmental risk scales too: patrol density, surveillance coverage, and local support worsen at higher difficulty."
+                        "- Easy missions may allow recoveries or luck. Hard or Extreme missions do not. Enemies exploit every weakness. No narrative safety net."
+                        "- Difficulty affects tone, pacing, and risk. It must influence narration, NPC behavior, and world response consistently."
+                        "The following is a recap of events that have already happened in the roleplay. This is context only:\n\n"
                         f"{summary.strip()}"
                     ),
                     max_output_tokens=2000,

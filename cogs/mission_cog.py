@@ -4,8 +4,44 @@ from discord.ext import commands
 from db.models import Missions
 from discord import app_commands
 from db.sessions import Session
+from google import genai
+from google.genai import types
+import os
+from pydantic import BaseModel
 from sqlalchemy.exc import PendingRollbackError
 from sqlalchemy import asc
+
+
+client = genai.Client(api_key=os.getenv("API_KEY"))
+MODEL = "gemini-2.0-flash"
+
+
+MISSION_SAFETY_SETTINGS = [
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    ),
+    types.SafetySetting(
+        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+        threshold=types.HarmBlockThreshold.BLOCK_NONE,
+    )
+]
+
+
+class MissionTemplate(BaseModel):
+    title: str
+    description: str
+    reward: int
+    difficulty: str
+
 
 class MissionCog(commands.Cog):
     def __init__(self, bot):
@@ -282,6 +318,77 @@ class MissionCog(commands.Cog):
                     await ctx.send("Canceled request.")
             except asyncio.TimeoutError:
                 await ctx.send("Confirmation timed out.")
+        session.close()
+
+
+    @app_commands.command(name="generate_missions", description="Generate missions for the specified faction")
+    @app_commands.describe(faction='What faction to generate missions for?', amount="Number of missions to generate (default: Fills up mission board to 10 total missions)")
+    @app_commands.choices(faction=[
+        app_commands.Choice(name="Rogue", value="Rogue"),
+        app_commands.Choice(name="Imperial", value="Imperial"),
+        app_commands.Choice(name="Rebel", value="Rebel"),
+        app_commands.Choice(name="Mandalorian", value="Mandalorian"),
+    ])
+    async def generate_missions(self, interaction: discord.Interaction, faction: app_commands.Choice[str], amount: int = 10):
+        await interaction.response.defer()
+        session = Session()
+        missions = session.query(Missions).filter_by(faction=faction.value).all()
+        mission_count = len(missions)
+        faction = faction.value
+        if mission_count < 10:
+            if amount >= 10:
+                num_to_create = 10 - mission_count
+            else:
+                num_to_create = amount
+            prompt = (
+                f"You are to create {num_to_create} Star Wars-themed missions for the {faction} faction. The server is set in 2BBY, during the height of the Empire. This is a gritty, grounded galaxy. No Jedi. No Force. No canon characters like Luke Skywalker, etc."
+                f"Ensure the missions are appropriate for the {faction}'s style. For example:\n"
+                f"- Imperial and Rebel missions should be varied. While they may involve direct conflict, they can also include operations like attacking pirate outposts, escorting convoys, gathering intel, or other creative objectives. Also create misisons varied for both navy and ground forces\n"
+                f"- Mandalorian and Rogue-aligned missions should reflect a more 'wild west' tone, often involving bounty hunting, smuggling, sabotage, or skirmishes with local factions or major powers.\n"
+                f"\nMissions can involve conflict with other major factions (e.g., Imperials vs. Rebels), but should not be exclusively about that. Some missions can be independent or against pirates, crime syndicates, or regional threats.\n"
+                f"\nEach mission must include the following:\n"
+                f"1. A title\n"
+                f"2. A description of the mission with vague details (3-6 sentences). Write mission descriptions without using second-person pronouns like 'you' or 'your'. Describe events, objectives, and situations in a neutral or third-person tone. Do not use weird phrasing such as 'The Imperial faction' or 'the rogue faction' etc. I should be as if these missions are on some kind of 'internet' job board or mission board.\n"
+                f"3. A difficulty rating, using only one of the following options: Very Easy, Easy, Medium, Hard, Very Hard, Expert. Harder missions are rarer than easier ones\n"
+                f"4. A credit reward appropriate to the difficulty tier:\n"
+                f"   - Very Easy: 500 - 900 credits\n"
+                f"   - Easy: 1,000 - 1,300 credits\n"
+                f"   - Medium: 1,500 - 2,000 credits\n"
+                f"   - Hard: 2,500 - 3,100 credits\n"
+                f"   - Very Hard: 5,000 - 6,200 credits\n"
+                f"   - Expert: 8,500 - 13,000 credits\n"
+                f"\nOnly name specific planets if the planet is significant to the mission. Otherwise, use general locations like: Outer Rim, Inner Rim, Mid Rim, Deep Core, Unknown Regions, Galactic Core, Expansion Region, or Colony Region.\n"
+            )
+
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=["Generate Star Wars themed missions"],
+                config=types.GenerateContentConfig(
+                    safety_settings=MISSION_SAFETY_SETTINGS,
+                    system_instruction=prompt,
+                    response_mime_type="application/json",
+                    temperature=0.8,
+                    response_schema=list[MissionTemplate]
+                )
+            )
+
+            missions_generated: list[MissionTemplate] = response.parsed
+            for mission in missions_generated:
+                new_mission = Missions(
+                    title=mission.title,
+                    description=mission.description,
+                    reward=mission.reward,
+                    difficulty=mission.difficulty,
+                    faction=faction,
+                    availability="Available"
+                )
+                session.add(new_mission)
+                session.commit()
+            await interaction.followup.send(f"🛠️ Generated {num_to_create} missions for faction **{faction}**...")
+
+        else:
+            await interaction.followup.send("❌ Mission list for that faction is already complete. (10 missions already registered).")
+
         session.close()
 
 
