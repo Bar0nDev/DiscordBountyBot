@@ -93,10 +93,10 @@ class ChatCog(commands.Cog):
                     model=MODEL,
                     contents=summary_prompt,
                     config=types.GenerateContentConfig(
-                        max_output_tokens=2000,
+                        max_output_tokens=1000,
                         temperature=0.7,
-                        system_instruction="You are compressing and updating a persistent summary of a character's "
-                                           "dialogue. Be extremely concise. Eliminate repetition, irrelevant fluff, "
+                        system_instruction="You are compressing and updating a persistent summary of a chat's "
+                                           "interactions. Be extremely concise. Eliminate repetition, irrelevant fluff, "
                                            "and generic pleasantries. Prioritize memorable actions, stated preferences, "
                                            "and meaningful exchanges relevant to the chat. "
                                            "Aim for brevity without losing nuance."
