@@ -13,6 +13,7 @@ MAX_GM_RECENT = 40
 SUMMARIZE_GM_BATCH = 30
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
+
 MODEL = "gemini-2.0-flash"
 PRIMARY_MODEL = "gemini-2.5-flash-preview-05-20"
 
@@ -203,7 +204,7 @@ class GMCog(commands.Cog):
                         model=MODEL,
                         contents=summary_prompt,
                         config=types.GenerateContentConfig(
-                            max_output_tokens=20000,
+                            max_output_tokens=2000,
                             temperature=0.5,
                             system_instruction=(
                                 "Summarize the following roleplay log as a clear, chronological story. "
@@ -343,45 +344,50 @@ class GMCog(commands.Cog):
                 summary_prompt.extend(recent)
             except Exception as e:
                 print(f"GM Stop Session Summarization failed: {e}")
+            target_channel = self.bot.get_channel(991747728298225764)
 
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=summary_prompt,
-                config=types.GenerateContentConfig(
-                    safety_settings=GM_SAFETY_SETTINGS,
-                    system_instruction="Based on all the events, summarize everything that happened into three ways. Summarize updates on the player"
-                                       "and/or new, relevant characters to the player, summarize any location or scene updates, and summarize what happened in a concise"
-                                       "yet detailed brief",
-                    max_output_tokens=650,
-                    temperature=0.8,
-                    response_mime_type="application/json",
-                    response_schema=SessionSummary
+            if summary_prompt:
+                response = client.models.generate_content(
+                    model=MODEL,
+                    contents=summary_prompt,
+                    config=types.GenerateContentConfig(
+                        safety_settings=GM_SAFETY_SETTINGS,
+                        system_instruction="Based on all the events, summarize everything that happened into three ways. Summarize updates on the player"
+                                           "and/or new, relevant characters to the player, summarize any location or scene updates, and summarize what happened in a concise"
+                                           "yet detailed brief",
+                        max_output_tokens=650,
+                        temperature=0.8,
+                        response_mime_type="application/json",
+                        response_schema=SessionSummary
+                    )
                 )
-            )
-            parsed_response: SessionSummary = response.parsed
-            character_summary = parsed_response.character
-            location_summary = parsed_response.location
-            scenario_summary = parsed_response.scenario
+                parsed_response: SessionSummary = response.parsed
+                character_summary = parsed_response.character
+                location_summary = parsed_response.location
+                scenario_summary = parsed_response.scenario
+
+                embed = Embed(
+                    title="Gamemaster Session Ended",
+                    description=f"The Gamemaster session for channel <#{ctx.channel.id}> has been stopped.",
+                    color=0x000000
+                )
+                embed.add_field(name="Character & NPC Updates", value=character_summary, inline=False)
+                embed.add_field(name="Location/Scene Changes", value=location_summary, inline=False)
+                embed.add_field(name="Summary of Events", value=scenario_summary, inline=False)
+
+                if target_channel:
+                    await target_channel.send(embed=embed)
+                else:
+                    print("Error: Could not find the target channel.")
+            else:
+                await target_channel.send("A Game Master Session has been stopped. Unfortunately, no summary was generated.")
+
 
             del rp_sessions[channel_id]
             save_rp_sessions(rp_sessions)
 
             await ctx.send("✅ Gamemaster for this channel has been stopped successfully.", ephemeral=True)
 
-            embed = Embed(
-                title="Gamemaster Session Ended",
-                description=f"The Gamemaster session for channel <#{ctx.channel.id}> has been stopped.",
-                color=0x000000
-            )
-            embed.add_field(name="Character & NPC Updates", value=character_summary, inline=False)
-            embed.add_field(name="Location/Scene Changes", value=location_summary, inline=False)
-            embed.add_field(name="Summary of Events", value=scenario_summary, inline=False)
-
-            target_channel = self.bot.get_channel(991747728298225764)
-            if target_channel:
-                await target_channel.send(embed=embed)
-            else:
-                print("Error: Could not find the target channel.")
 
         except KeyError:
             await ctx.send("❌ There is no active game master session in this channel!", ephemeral=True)

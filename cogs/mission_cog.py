@@ -2,7 +2,7 @@ import asyncio
 import discord
 from discord.ext import commands
 from db.models import Missions
-from discord import app_commands
+from discord import app_commands, Embed
 from db.sessions import Session
 from google import genai
 from google.genai import types
@@ -51,15 +51,14 @@ class MissionCog(commands.Cog):
     @commands.has_role("Game Master")
     @app_commands.describe(title="Title of mission", description="Job description",
                            reward="How much is earned upon completion?",
-                           difficulty="Choose: Very Easy, Easy, Medium, Hard, Very Hard, Expert.",
+                           difficulty="Choose: Easy, Medium, Hard, Extreme, Impossible.",
                            faction='What faction is this mission for?')
     @app_commands.choices(difficulty=[
-        app_commands.Choice(name="Very Easy", value="Very Easy"),
         app_commands.Choice(name="Easy", value="Easy"),
         app_commands.Choice(name="Medium", value="Medium"),
         app_commands.Choice(name="Hard", value="Hard"),
-        app_commands.Choice(name="Very Hard", value="Very Hard"),
-        app_commands.Choice(name="Expert", value="Expert"),
+        app_commands.Choice(name="Extreme", value="Extreme"),
+        app_commands.Choice(name="Impossible", value="Impossible"),
     ])
     @app_commands.choices(faction=[
         app_commands.Choice(name="Rogue", value="Rogue"),
@@ -334,6 +333,25 @@ class MissionCog(commands.Cog):
         session = Session()
         missions = session.query(Missions).filter_by(faction=faction.value).all()
         mission_count = len(missions)
+
+        easy_count = 0
+        medium_count = 0
+        hard_count = 0
+        extreme_count = 0
+        impossible_count = 0
+        for mission in missions:
+            if mission.difficulty == "Easy":
+                easy_count += 1
+            elif mission.difficulty == "Medium":
+                medium_count += 1
+            elif mission.difficulty == "Hard":
+                hard_count += 1
+            elif mission.difficulty == "Extreme":
+                extreme_count += 1
+            elif mission.difficulty == "Impossible":
+                impossible_count += 1
+
+
         faction = faction.value
         if mission_count < 10:
             if amount >= 10:
@@ -349,14 +367,14 @@ class MissionCog(commands.Cog):
                 f"\nEach mission must include the following:\n"
                 f"1. A title\n"
                 f"2. A description of the mission with vague details (3-6 sentences). Write mission descriptions without using second-person pronouns like 'you' or 'your'. Describe events, objectives, and situations in a neutral or third-person tone. Do not use weird phrasing such as 'The Imperial faction' or 'the rogue faction' etc. I should be as if these missions are on some kind of 'internet' job board or mission board.\n"
-                f"3. A difficulty rating, using only one of the following options: Very Easy, Easy, Medium, Hard, Very Hard, Expert. Harder missions are rarer than easier ones\n"
+                f"3. A difficulty rating, using only one of the following options: Easy, Medium, Hard, Extreme, Impossible.\n"
                 f"4. A credit reward appropriate to the difficulty tier:\n"
-                f"   - Very Easy: 500 - 900 credits\n"
-                f"   - Easy: 1,000 - 1,300 credits\n"
-                f"   - Medium: 1,500 - 2,000 credits\n"
+                f"   - Easy: 500 - 1,000 credits\n"
+                f"   - Medium: 1,000 - 2,500 credits\n"
                 f"   - Hard: 2,500 - 3,100 credits\n"
-                f"   - Very Hard: 5,000 - 6,200 credits\n"
-                f"   - Expert: 8,500 - 13,000 credits\n"
+                f"   - Extreme: 3,100 - 6,200 credits\n"
+                f"   - Impossible: 8,500 - 13,000 credits\n"
+                f"There should be in a ratio of 10 missions, a total of 3 easy missions, 2 medium missions, 2 hard missions, 2 extreme missions, 1 impossible mission. Currently, the count of registered mission difficulties out of {mission_count} missions are {easy_count} easies, {medium_count} mediums, {hard_count} hards, {extreme_count} extremes, {impossible_count} impossible."
                 f"\nOnly name specific planets if the planet is significant to the mission. Otherwise, use general locations like: Outer Rim, Inner Rim, Mid Rim, Deep Core, Unknown Regions, Galactic Core, Expansion Region, or Colony Region.\n"
             )
 
@@ -384,10 +402,20 @@ class MissionCog(commands.Cog):
                 )
                 session.add(new_mission)
                 session.commit()
-            await interaction.followup.send(f"🛠️ Generated {num_to_create} missions for faction **{faction}**...")
+            embed = Embed(
+                title="🛠️ Missions Generated",
+                description=f"Successfully generated **{num_to_create}** missions for faction **{faction}**.",
+                color=0x00ff00  # green
+            )
+            await interaction.followup.send(embed=embed)
 
         else:
-            await interaction.followup.send("❌ Mission list for that faction is already complete. (10 missions already registered).")
+            else_embed = Embed(
+                title="❌ Mission Generation Failed",
+                description="The mission list for that faction is already complete.\n(10 missions already registered).",
+                color=0xff0000
+            )
+            await interaction.followup.send(embed=else_embed)
 
         session.close()
 

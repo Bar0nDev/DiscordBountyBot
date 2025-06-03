@@ -2,7 +2,7 @@ import asyncio
 import discord
 from discord.ext import commands
 from db.models import Bounties
-from discord import app_commands
+from discord import app_commands, Embed
 from db.sessions import Session
 from google import genai
 from google.genai import types
@@ -207,11 +207,20 @@ class BountyCog(commands.Cog):
                 )
                 session.add(new_bounty)
                 session.commit()
-            await interaction.followup.send(f"🛠️ Generated {num_to_create} bounties for the bounty board...")
+            embed = Embed(
+                title="🛠️ Bounties Generated",
+                description=f"Successfully generated **{num_to_create}** bounties.",
+                color=0x00ff00  # green
+            )
+            await interaction.followup.send(embed=embed)
 
         else:
-            await interaction.followup.send(
-                "❌ Bounty board is already complete. (10 bounties already registered).")
+            else_embed = Embed(
+                title="❌ Bounty Generation Failed",
+                description="The bounty board is already complete.\n(10 bounties already registered).",
+                color=0xff0000
+            )
+            await interaction.followup.send(embed=else_embed)
 
         session.close()
 
