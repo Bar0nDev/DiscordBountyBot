@@ -198,7 +198,7 @@ class BountyCog(commands.Cog):
             )
 
             bounties_generated: list[BountyTemplate] = response.parsed
-            for bounty in bounties_generated:
+            for bounty in bounties_generated[:num_to_create]:
                 new_bounty = Bounties(
                     target=bounty.target,
                     description=bounty.description,

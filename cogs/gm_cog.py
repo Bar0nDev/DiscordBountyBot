@@ -9,8 +9,8 @@ import os
 import random
 from utils import *
 
-MAX_GM_RECENT = 40
-SUMMARIZE_GM_BATCH = 30
+MAX_GM_RECENT = 30
+SUMMARIZE_GM_BATCH = 15
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
 
@@ -283,6 +283,7 @@ class GMCog(commands.Cog):
             )
 
             parsed_output: list[CharTurn] = response.parsed
+            combined_message = ""
 
             for char_turn in parsed_output:
                 character = char_turn.character
@@ -309,10 +310,12 @@ class GMCog(commands.Cog):
                         username=character,
                         avatar_url=avatar_url
                     )
-                    recent.append(types.Content(
-                        role='model',
-                        parts=[types.Part.from_text(text=f"NPC: {character}, Message: {message}")]
-                    ))
+                    combined_message += f"NPC: {character}, Message: {message}\n"
+
+            recent.append(types.Content(
+                role='model',
+                parts=[types.Part.from_text(text=combined_message.strip())]
+            ))
 
             rp_sessions[channel.id] = {
                 "scene_info": scene_info,

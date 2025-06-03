@@ -227,6 +227,7 @@ class MissionCog(commands.Cog):
         app_commands.Choice(name="Mandalorian", value="Mandalorian"),
     ])
     async def all_missions(self, ctx, faction: app_commands.Choice[str]):
+        await ctx.defer()
         session = Session()
         missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
         embed_description = ""
@@ -391,7 +392,7 @@ class MissionCog(commands.Cog):
             )
 
             missions_generated: list[MissionTemplate] = response.parsed
-            for mission in missions_generated:
+            for mission in missions_generated[:num_to_create]:
                 new_mission = Missions(
                     title=mission.title,
                     description=mission.description,
