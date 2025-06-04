@@ -121,7 +121,11 @@ class EconCog(commands.Cog):
                     await asyncio.sleep(3)
 
                 total_pool = (num_players * bet) * 2
-                individual_reward = int(total_pool // num_players)
+                num_winners = len(reaction_dict[pods.index(standings[0]) + 1])
+                if num_winners != 0:
+                    individual_reward = int(total_pool // num_winners)
+                else:
+                    individual_reward = 0
                 async with Client(os.getenv("U_TOKEN")) as u_client:
                     guild = await u_client.get_guild(guild_id)
                     for player in reaction_dict[pods.index(standings[0]) + 1]:
