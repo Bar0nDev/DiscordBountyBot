@@ -8,6 +8,7 @@ from google import genai
 from google.genai import types
 import os
 from pydantic import BaseModel
+from sqlalchemy import asc
 
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
@@ -111,7 +112,7 @@ class BountyCog(commands.Cog):
     @commands.hybrid_command(name="all_bounties", description="Shows all available bounties.")
     async def all_bounties(self, ctx):
         session = Session()
-        bounties = session.query(Bounties).all()
+        bounties = session.query(Bounties).order_by(asc(Bounties.reward)).all()
         embed_description = ""
         for bounty in bounties:
             embed_description += f"\n\n**<:credits:1099938341467738122>{bounty.reward:,} - ID: {bounties.index(bounty) + 1} - {bounty.target}**\n`From {bounty.client}`\n{bounty.description}"
