@@ -17,33 +17,35 @@ client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
 PRIMARY_MODEL = "gemini-2.5-flash-preview-05-20"
 
+base_url = "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/"
+
 character_avatars = [
-    ("Gamemaster", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gamemaster.png?raw=true"),
-    ("Stormtrooper", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Stormtrooper.png?raw=true"),
-    ("Imperial Officer Male", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Officer%20Male.png?raw=true"),
-    ("Stormtrooper Sergeant", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Stormtrooper%20Sergeant.png?raw=true"),
-    ("Rebel Soldier", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rebel.png?raw=true"),
-    ("Mercenary", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Mercenary.png?raw=true"),
-    ("Bounty Hunter", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Bounty%20Hunter.png?raw=true"),
-    ("Death Trooper", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Death%20Trooper.png?raw=true"),
-    ("Smuggler", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Smuggler.png?raw=true"),
-    ("Droid", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Droid.png?raw=true"),
-    ("Imperial Security Droid", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Security%20Droid.png?raw=true"),
-    ("Pirate", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Pirate.png?raw=true"),
-    ("Man", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Man.png?raw=true"),
-    ("Woman", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Woman.png?raw=true"),
-    ("Gang Leader", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Gang%20Leader.png?raw=true"),
-    ("Twi'lek Female", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Twilek%20F.png?raw=true"),
-    ("Unassigned", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Unassigned.png?raw=true"),
-    ("Mandalorian", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Mandalorian.png?raw=true"),
-    ("TIE Pilot", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/TIE%20Pilot.png?raw=true"),
-    ("Rebel Pilot", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rebel%20Pilot.png?raw=true"),
-    ("Imperial Officer Female", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Imperial%20Officer%20F.png?raw=true"),
-    ("ISB Agent", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Agent.png?raw=true"),
-    ("ISB Officer", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/ISB%20Officer.png?raw=true"),
-    ("High-Ranking Imperial", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/High%20ranking%20Imperial%20Officer.png?raw=true"),
-    ("Rodian", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Rodian.png?raw=true"),
-    ("Imperial Jump Trooper", "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/Jump%20Trooper.png?raw=true"),
+    ("Gamemaster", "Gamemaster.png"),
+    ("Stormtrooper", "Stormtrooper.png"),
+    ("Male Imperial Officer", "Imperial%20Officer%20Male.png"),
+    ("Stormtrooper Sergeant", "Stormtrooper%20Sergeant.png"),
+    ("Rebel Soldier", "Rebel.png"),
+    ("Mercenary", "Mercenary.png"),
+    ("Bounty Hunter", "Bounty%20Hunter.png"),
+    ("Death Trooper", "Death%20Trooper.png"),
+    ("Smuggler", "Smuggler.png"),
+    ("Droid", "Droid.png"),
+    ("Imperial Security Droid", "Imperial%20Security%20Droid.png"),
+    ("Pirate", "Pirate.png"),
+    ("Man", "Man.png"),
+    ("Woman", "Woman.png"),
+    ("Gang Leader", "Gang%20Leader.png"),
+    ("Twi'lek Female", "Twilek%20F.png"),
+    ("Unassigned", "Unassigned.png"),
+    ("Mandalorian", "Mandalorian.png"),
+    ("TIE Pilot", "TIE%20Pilot.png"),
+    ("Rebel Pilot", "Rebel%20Pilot.png"),
+    ("Imperial Officer Female", "Imperial%20Officer%20F.png"),
+    ("ISB Agent", "ISB%20Agent.png"),
+    ("ISB Officer", "ISB%20Officer.png"),
+    ("High-Ranking Imperial", "High%20ranking%20Imperial%20Officer.png"),
+    ("Rodian", "Rodian.png"),
+    ("Imperial Jump Trooper", "Jump%20Trooper.png"),
 ]
 
 avatar_index_guide = " ".join(
@@ -296,7 +298,7 @@ class GMCog(commands.Cog):
                     image_index = char_list[character]
 
                 try:
-                    avatar_url = character_avatars[image_index][1]
+                    avatar_url = base_url + character_avatars[image_index][1] + "?raw=true"
                 except IndexError:
                     avatar_url = None
                 async with ctx.channel.typing():
@@ -372,7 +374,7 @@ class GMCog(commands.Cog):
                 embed = Embed(
                     title="Gamemaster Session Ended",
                     description=f"The Gamemaster session for channel <#{ctx.channel.id}> has been stopped.",
-                    color=0x000000
+                    color=0x00ff00
                 )
                 embed.add_field(name="Character & NPC Updates", value=character_summary, inline=False)
                 embed.add_field(name="Location/Scene Changes", value=location_summary, inline=False)

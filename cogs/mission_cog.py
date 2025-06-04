@@ -181,7 +181,7 @@ class MissionCog(commands.Cog):
                     status_pass = False
             elif mission_field.value == 'Difficulty':
                 title_diff = mission_value.title()
-                available_diff = ['Very Easy', 'Easy', 'Medium', 'Hard', 'Very Hard', 'Expert']
+                available_diff = ['Easy', 'Medium', 'Hard', 'Extreme', 'Impossible']
                 if title_diff in available_diff:
                     targeted_mission.difficulty = title_diff
                 else:
