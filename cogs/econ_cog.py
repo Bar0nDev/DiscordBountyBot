@@ -25,13 +25,17 @@ class EconCog(commands.Cog):
                       "☄️"]
         embed = discord.Embed(
             colour=discord.Colour.from_rgb(255, 215, 0),
-            title=f"🏁 The Pod Race is About to Begin! 🏁",
-            description=f"Place your bets! The racers are warming up and ready to go.\n\n"
-                        f"**Bet <:credits:1099938341467738122> {bet} credits** by reacting with the pod number:\n\n"
-                        f"1️⃣ **{pod_emojis[0]} - Blaze Runner**\n\n"
-                        f"2️⃣ **{pod_emojis[1]} - Turbo Twister**\n\n"
-                        f"3️⃣ **{pod_emojis[2]} - Night Comet**\n\n\n"
-                        f"🚨 *Hurry up! The race is about to start! Bets are locked in **30** seconds* 🚨"
+            title="🏁 The Pod Race is About to Begin! 🏁",
+            description=(
+                "Place your bets! The racers are warming up and ready to go.\n\n"
+                f"**Bet Amount:** <:credits:1099938341467738122> {bet} credits\n"
+                "**Payout:** 2x the total prize pool, split evenly among the winners\n\n"
+                f"To bet, react with the number of the pod you choose:\n\n"
+                f"1️⃣ **{pod_emojis[0]} - Blaze Runner**\n"
+                f"2️⃣ **{pod_emojis[1]} - Turbo Twister**\n"
+                f"3️⃣ **{pod_emojis[2]} - Night Comet**\n\n"
+                "🚨 *Hurry! Bets lock in **30 seconds** before the race starts!* 🚨"
+            )
         )
         embed.set_footer(text="React below with the corresponding pod racer number!")
         embed.set_image(
@@ -75,7 +79,7 @@ class EconCog(commands.Cog):
                     for player in reaction_dict[option]:
                         num_players += 1
                         user = await guild.get_user_balance(player.id)
-                        await user.update(bank=-bet)
+                        await user.update(cash=-bet)
             if num_players:
                 countdown_embed = discord.Embed(
                     title="🏎️  Pods are Lining Up!  🏎️",
@@ -122,16 +126,20 @@ class EconCog(commands.Cog):
                     guild = await u_client.get_guild(guild_id)
                     for player in reaction_dict[pods.index(standings[0]) + 1]:
                         user = await guild.get_user_balance(player.id)
-                        await user.update(bank=+individual_reward)
+                        await user.update(cash=+individual_reward)
 
                 result_embed = discord.Embed(
                     title="🏆 Pod Racing Results 🏆",
                     description=(
-                        f"Laps: {turns}\n\n"
-                        f"**Final Standings:**\n\n{race_standings}\n\n"
-                        f"<:credits:1099938341467738122> Credits have been distributed."),
+                        f"**Laps:** {turns}\n\n"
+                        f"**Final Standings:**\n{race_standings}\n\n"
+                        f"**Total Prize Pool:** <:credits:1099938341467738122> {total_pool}\n"
+                        f"**Each Winner Receives:** <:credits:1099938341467738122> {individual_reward}\n\n"
+                        f"<:credits:1099938341467738122> Credits have been distributed to the winners!"
+                    ),
                     colour=discord.Colour.from_rgb(255, 215, 0)
                 )
+
                 result_embed.set_footer(text="Congratulations to the winning pod racers!")
                 result_embed.set_image(
                     url="https://media2.giphy.com/media/3ornk6AoeOfjdZoRLq/giphy.gif?cid=6c09b9522dizx8gp7g58tp22i6c5vakw3ote49aoz0pjoomv&ep=v1_internal_gif_by_id&rid=giphy.gif&ct=g")
@@ -163,7 +171,7 @@ class EconCog(commands.Cog):
                 async with Client(os.getenv("U_TOKEN")) as u_client:
                     guild = await u_client.get_guild(guild_id)
                     user = await guild.get_user_balance(user_id)
-                    await user.update(bank=+300)
+                    await user.update(cash=+300)
                 embed = discord.Embed(
                     colour=discord.Colour.from_rgb(0, 0, 0),
                     title=f"✅  Transmission Received",
@@ -183,7 +191,7 @@ class EconCog(commands.Cog):
                 async with Client(os.getenv("U_TOKEN")) as u_client:
                     guild = await u_client.get_guild(guild_id)
                     user = await guild.get_user_balance(message.author.id)
-                    await user.update(bank=+300)
+                    await user.update(cash=+300)
                 await message.add_reaction("✅")
 
 
