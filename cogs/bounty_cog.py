@@ -99,7 +99,7 @@ class BountyCog(commands.Cog):
         if b_id not in range(1, 11):
             await ctx.send("Invalid bounty ID. Enter an ID number from 1-10")
         else:
-            bounty = session.query(Bounties).all()[b_id - 1]
+            bounty = session.query(Bounties).order_by(asc(Bounties.reward)).all()[b_id - 1]
             embed = discord.Embed(
                 colour=discord.Colour.from_rgb(0, 0, 0),
                 title=f"=== Bounty Info - ID: {b_id} ===",
@@ -133,7 +133,7 @@ class BountyCog(commands.Cog):
         if b_id not in range(1, 11):
             await ctx.send("Invalid bounty ID. Enter an ID number from 1-10")
         else:
-            bounty = session.query(Bounties).all()[b_id - 1]
+            bounty = session.query(Bounties).order_by(asc(Bounties.reward)).all()[b_id - 1]
             embed = discord.Embed(
                 colour=discord.Colour.from_rgb(0, 0, 0),
                 title=f"=== Delete Bounty - ID: {b_id} ===",

@@ -259,8 +259,16 @@ class GMCog(commands.Cog):
                         "The GM narration block must NEVER contain any character action or dialogue—only environmental detail, ambient noise, or motion. "
                         "Scene narration must remain cinematic: weather, shadows, footsteps, distant voices, sparks, flickering lights. "
 
-                        "Assign each NPC an image index from the following list: "
+                        "Assign each NPC an image index based on their profile in the following list: "
                         f"{avatar_index_guide} "
+                        
+                        "When generating NPC names:\n"
+                        "- If the NPC is named, use their full name (e.g., 'Major Rhen', 'Sergeant Nalto'). Do not fall back to a generic title.\n"
+                        "- If the NPC is unnamed, use only their archetype (e.g., 'Stormtrooper', 'Imperial Officer', 'Death Trooper').\n"
+                        "- NEVER include gender or avatar reference terms in the display name (e.g., 'Imperial Officer Male' is incorrect — use 'Imperial Officer' instead).\n"
+                        "- The avatar index (e.g., 'Male Imperial Officer') is for internal avatar image lookup only. It should NOT appear in the name shown to players.\n"
+
+                        
                         f"Player Character: {scene_info['character']} "
                         f"Location: {scene_info['location']} "
                         f"Scenario: {scene_info['scenario']} "
@@ -420,6 +428,7 @@ class GMCog(commands.Cog):
         else:
             await ctx.send("❌ The game master is not active for this channel.", ephemeral=True)
 
+
     @commands.hybrid_command(name="gamemaster_continue", description="Have the bot continue with another GM Message")
     async def gamemaster_continue(self, ctx):
         rp_sessions = load_rp_sessions()
@@ -429,6 +438,7 @@ class GMCog(commands.Cog):
             await self.gamemaster_chat(ctx)
         else:
             await ctx.send("❌ The game master is not active for this channel.", ephemeral=True)
+
 
     @commands.hybrid_command(name="gamemaster_location", description="Move Game master location")
     @app_commands.describe(channel="Hyperlink of #channel to move to", description="Description of the new location.")
