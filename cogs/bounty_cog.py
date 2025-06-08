@@ -40,6 +40,7 @@ class BountyTemplate(BaseModel):
     description: str
     reward: int
     client: str
+    stars: int
 
 
 class BountyCog(commands.Cog):
@@ -47,18 +48,31 @@ class BountyCog(commands.Cog):
         self.bot = bot
 
     @commands.hybrid_command(name="add_bounty", description='Adds a new bounty')
-    @commands.has_role("Member")
-    @app_commands.describe(target="Who does the bounty target?", description="Bounty description or additional notes?",
-                           reward="How much will you pay upon completion? Minimum 150 credits!")
-    async def add_bounty(self, ctx, target: str, description: str, reward: int):
+    @commands.has_role("Game Master")
+    @app_commands.describe(target="Who does the bounty target?",
+                           stars="How much of a priority is the bounty? Enter a number from 1-5, with 1 being highest priority.",
+                           description="Bounty description or additional notes?",
+                           reward="How much will you pay upon completion? Minimum 150 credits!",
+                           client="Who is initiating the bounty?")
+    async def add_bounty(self, ctx, target: str, description: str, reward: int, stars: int, client: str):
+        await ctx.defer()
         session = Session()
         if reward < 150:
             await ctx.send("Insufficient reward amount set. Canceled request.")
+        elif not 1 <= stars <= 5:
+            await ctx.send("Invalid star rating. Please enter a value between 1 (highest priority) and 5.")
         else:
+            star_display = "★" * (6 - stars) + "☆" * (stars - 1)
             embed = discord.Embed(
                 colour=discord.Colour.from_rgb(0, 0, 0),
                 title="Confirm Bounty Details",
-                description=f"**Target:** {target}\n\n**Reward:** <:credits:1099938341467738122>{reward:,}\n\n**Client:** {ctx.author}\n\n**Description:** {description}"
+                description=(
+                    f"**Target:** {target}\n"
+                    f"**Priority:** {star_display}\n"
+                    f"**Reward:** <:credits:1099938341467738122>{reward:,}\n"
+                    f"**Client:** {ctx.author}\n"
+                    f"**Description:** {description}"
+                )
             )
             embed.set_footer(text="✅ to confirm, or ❌ to cancel.")
 
@@ -80,7 +94,8 @@ class BountyCog(commands.Cog):
                             target=target.title(),
                             description=description,
                             reward=reward,
-                            client=str(ctx.author)
+                            client=client,
+                            stars=stars
                         )
                         session.add(new_bounty)
                         session.commit()
@@ -95,15 +110,23 @@ class BountyCog(commands.Cog):
     @commands.hybrid_command(name="bounty_info", description="Show info for specified bounty ID (1-10).")
     @app_commands.describe(b_id="ID of bounty")
     async def bounty_info(self, ctx, b_id: int):
+        await ctx.defer()
         session = Session()
         if b_id not in range(1, 11):
             await ctx.send("Invalid bounty ID. Enter an ID number from 1-10")
         else:
             bounty = session.query(Bounties).order_by(asc(Bounties.reward)).all()[b_id - 1]
+            star_display = "★" * (6 - bounty.stars) + "☆" * (bounty.stars - 1)
             embed = discord.Embed(
                 colour=discord.Colour.from_rgb(0, 0, 0),
-                title=f"=== Bounty Info - ID: {b_id} ===",
-                description=f"**<:credits:1099938341467738122>{bounty.reward:,} - {bounty.target}**\n`From {bounty.client}`\n{bounty.description}"
+                title=f"🎯 Bounty Contract — ID: `{b_id}`",
+                description=(
+                    f"**🎯 Target:** `{bounty.target}`\n"
+                    f"> 🚨 Priority: {star_display}\n"
+                    f"> 👤 Client: `{bounty.client}`\n"
+                    f"> 💰 Reward: <:credits:1099938341467738122> **{bounty.reward:,}**\n"
+                    f"> 📝 {bounty.description}"
+                )
             )
             await ctx.send(embed=embed)
         session.close()
@@ -111,14 +134,24 @@ class BountyCog(commands.Cog):
 
     @commands.hybrid_command(name="all_bounties", description="Shows all available bounties.")
     async def all_bounties(self, ctx):
+        await ctx.defer()
         session = Session()
         bounties = session.query(Bounties).order_by(asc(Bounties.reward)).all()
         embed_description = ""
-        for bounty in bounties:
-            embed_description += f"\n\n**<:credits:1099938341467738122>{bounty.reward:,} - ID: {bounties.index(bounty) + 1} - {bounty.target}**\n`From {bounty.client}`\n{bounty.description}"
+        for i, bounty in enumerate(bounties, start=1):
+            star_display = "★" * (6 - bounty.stars) + "☆" * (bounty.stars - 1)
+
+            embed_description += (
+                f"**#{i} — `{bounty.target}`**\n"
+                f"> 🚨 Priority: {star_display}\n"
+                f"> 👤 Client: `{bounty.client}`\n"
+                f"> 💰 Reward: <:credits:1099938341467738122> **{bounty.reward:,}**\n"
+                f"> 📝 {bounty.description}\n\n"
+            )
+
         embed = discord.Embed(
             colour=discord.Colour.from_rgb(0, 0, 0),
-            title="=== Bounty Board ===",
+            title="📜 Bounty Board",
             description=embed_description
         )
         await ctx.send(embed=embed)
@@ -129,17 +162,26 @@ class BountyCog(commands.Cog):
     @commands.has_role('Game Master')
     @app_commands.describe(b_id="ID of bounty")
     async def delete_bounty(self, ctx, b_id: int):
+        await ctx.defer()
         session = Session()
         if b_id not in range(1, 11):
             await ctx.send("Invalid bounty ID. Enter an ID number from 1-10")
         else:
             bounty = session.query(Bounties).order_by(asc(Bounties.reward)).all()[b_id - 1]
+            star_display = "★" * (6 - bounty.stars) + "☆" * (bounty.stars - 1)
+
             embed = discord.Embed(
                 colour=discord.Colour.from_rgb(0, 0, 0),
-                title=f"=== Delete Bounty - ID: {b_id} ===",
-                description=f"**<:credits:1099938341467738122>{bounty.reward:,} - {bounty.target}**\n `From {bounty.client}`\n{bounty.description}"
+                title=f"⚠️ Confirm Bounty — ID: `{b_id}`",
+                description=(
+                    f"**🎯 Target:** `{bounty.target}`\n"
+                    f"> 🚨 Priority: {star_display}\n"
+                    f"> 👤 Client: `{bounty.client}`\n"
+                    f"> 💰 Reward: <:credits:1099938341467738122> **{bounty.reward:,}**\n"
+                    f"> 📝 {bounty.description}"
+                )
             )
-            embed.set_footer(text="✅ to confirm, or ❌ to cancel.")
+            embed.set_footer(text="React with ✅ to confirm deletion, or ❌ to cancel.")
 
             bot_response = await ctx.send(embed=embed)
             await bot_response.add_reaction("✅")
@@ -181,8 +223,9 @@ class BountyCog(commands.Cog):
                 f"For each bounty, include the following:\\n"
                 f"1. Target – A name or codename. Can be realistic, alias-based, or underworld-styled. Should sound like a Star Wars character.\\n"
                 f"2. Description – 3–6 sentences. Written as if posted to an illicit network. Describe the target's crime, affiliations, last known location, danger level, or unique info. Do NOT use second-person language. This is a listing meant for hardened bounty hunters or syndicate enforcers. Also mention how the bounty is to be completed, whether dead, alive, etc.\\n"
-                f"3. Reward – A numeric credit value (between 500–13,000) based on how high-profile or dangerous the bounty is. Use your judgment. Small-time targets can be under 1,000 credits; major threats or factional figures can command 10,000+.\\n"
-                f"4. Client – The name or alias of the individual, faction, or anonymous source who posted the bounty.\\n\\n"
+                f"3. Reward – A numeric credit value (between 1000–13,000) based on how high-profile or dangerous the bounty is. Use your judgment. Small-time targets can be under 1,000 credits; major threats or factional figures can command 10,000+.\\n"
+                f"4. Client – The name or alias of the individual, faction, or anonymous source who posted the bounty."
+                f"5. Stars - The level of 'wanted' or priority level for the bounty from 1-5. A 1 star means highest priority while 5 means lowest"
                 f"Use an appropriately gritty, criminal tone — think dark holonet terminal postings. Be terse but evocative. Only use specific planetary names if essential; otherwise refer to regions like 'Outer Rim', 'Mid Rim', 'Expansion Region', etc. Avoid exposition or polite phrasing — this is underworld business."
             )
 
@@ -201,10 +244,11 @@ class BountyCog(commands.Cog):
             bounties_generated: list[BountyTemplate] = response.parsed
             for bounty in bounties_generated[:num_to_create]:
                 new_bounty = Bounties(
-                    target=bounty.target,
+                    target=f"{bounty.target} [NPC]",
                     description=bounty.description,
                     reward=bounty.reward,
-                    client=bounty.client
+                    client=bounty.client,
+                    stars=bounty.stars
                 )
                 session.add(new_bounty)
                 session.commit()

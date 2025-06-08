@@ -46,6 +46,7 @@ character_avatars = [
     ("High-Ranking Imperial", "High%20ranking%20Imperial%20Officer.png"),
     ("Rodian", "Rodian.png"),
     ("Imperial Jump Trooper", "Jump%20Trooper.png"),
+    ("Imperial Scout Trooper", "Scout%20Trooper.png")
 ]
 
 avatar_index_guide = " ".join(

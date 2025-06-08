@@ -20,6 +20,7 @@ class Bounties(Base):
     description = Column(String)
     reward = Column(Integer)
     client = Column(String)
+    stars = Column(Integer)
 
 engine = create_engine("sqlite:///info.db", echo=True)
 Base.metadata.create_all(engine)
