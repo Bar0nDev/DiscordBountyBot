@@ -69,9 +69,27 @@ class MissionCog(commands.Cog):
     async def add_mission(self, ctx, title: str, description: str, reward: int, difficulty: app_commands.Choice[str],
                           faction: app_commands.Choice[str]):
         session = Session()
-        embed = discord.Embed(colour=discord.Colour.from_rgb(0, 0, 0),
-                              title=f"Confirm Mission Details",
-                              description=f"**Title:** {' '.join(x.capitalize() for x in title.split())}\n\n**Faction:** {faction.value}\n\n**Difficulty:** {difficulty.value}\n\n**Reward:** <:credits:1099938341467738122>{reward:,}\n\n**Description:** {description}")
+
+        faction_colors = {
+            "Rogue": discord.Colour.from_rgb(220, 20, 60),
+            "Imperial": discord.Colour.from_rgb(0, 0, 0),
+            "Rebel": discord.Colour.from_rgb(255, 165, 0),
+            "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
+        }
+        embed_color = faction_colors.get(faction.value, discord.Colour.default())
+
+        formatted_title = ' '.join(word.capitalize() for word in title.split())
+        embed = discord.Embed(
+            colour=embed_color,
+            title="📝 Confirm New Mission Details",
+            description=(
+                f"**🎯 Title:** `{formatted_title}`\n"
+                f"> 🛡️ Faction: `{faction.value}`\n"
+                f"> ⚙️ Difficulty: `{difficulty.value}`\n"
+                f"> 💰 Reward: <:credits:1099938341467738122> **{reward:,}**\n"
+                f"> 📝 Description:\n{description}"
+            )
+        )
         embed.set_footer(text="✅ to confirm, or ❌ to cancel.")
 
         bot_response = await ctx.send(embed=embed)
@@ -123,20 +141,49 @@ class MissionCog(commands.Cog):
     )
     async def mission_status(self, ctx, m_id: int, faction: app_commands.Choice[str]):
         session = Session()
-        targeted_mission = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()[m_id - 1]
-        if targeted_mission:
-            if targeted_mission.availability == "Available":
-                targeted_mission.availability = "In Progress"
-            else:
-                targeted_mission.availability = "Available"
-            try:
-                session.commit()
-            except PendingRollbackError:
-                session.rollback()
-            await ctx.send(
-                f"Mission status updated. {faction.name} mission ID {m_id}, set to `Status: {targeted_mission.availability}`")
-        else:
-            await ctx.send("Mission not found.")
+
+        if m_id not in range(1, 11):
+            await ctx.send("❌ Invalid mission ID. Must be between 1 and 10.")
+            session.close()
+            return
+
+        missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+
+        if m_id > len(missions):
+            await ctx.send("❌ That mission ID doesn't exist for the selected faction.")
+            session.close()
+            return
+
+        mission = missions[m_id - 1]
+
+        old_status = mission.availability
+        new_status = "In Progress" if old_status == "Available" else "Available"
+        mission.availability = new_status
+
+        try:
+            session.commit()
+        except PendingRollbackError:
+            session.rollback()
+
+        faction_colors = {
+            "Rogue": discord.Colour.from_str("#dc143c"),
+            "Imperial": discord.Colour.from_rgb(0, 0, 0),
+            "Rebel": discord.Colour.from_str("#ffa500"),
+            "Mandalorian": discord.Colour.from_str("#9500ff")
+        }
+        embed_color = faction_colors.get(faction.value, discord.Colour.default())
+
+        embed = discord.Embed(
+            colour=embed_color,
+            title=f"🔄 Mission Status Updated — {faction.value} ID: {m_id}",
+            description=(
+                f"**🎯 {mission.title}**\n"
+                f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
+                f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
+                f"> 📝 Status changed: `{old_status}` ➜ `{new_status}`"
+            )
+        )
+        await ctx.send(embed=embed)
         session.close()
 
 
@@ -161,60 +208,86 @@ class MissionCog(commands.Cog):
     async def edit_mission(self, ctx, m_id: int, faction: app_commands.Choice[str], mission_field: app_commands.Choice[str],
                            mission_value: str):
         session = Session()
-        targeted_mission = None
-        status_pass = True
 
-        targeted_mission = \
-        session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()[m_id - 1]
-        if targeted_mission:
-            if mission_field.value == 'Title':
-                mission_value = ' '.join(x.capitalize() for x in mission_value.split())
-                targeted_mission.title = mission_value
-            elif mission_field.value == 'Description':
-                targeted_mission.description = mission_value
-            elif mission_field.value == 'Reward':
-                try:
-                    mission_value = int(mission_value)
-                    targeted_mission.reward = mission_value
-                except:
-                    await ctx.send("Reward value must be an integer.")
-                    status_pass = False
-            elif mission_field.value == 'Difficulty':
-                title_diff = mission_value.title()
-                available_diff = ['Easy', 'Medium', 'Hard', 'Extreme', 'Impossible']
-                if title_diff in available_diff:
-                    targeted_mission.difficulty = title_diff
-                else:
-                    await ctx.send(f"Invalid difficulty set. Available options are: {available_diff}.")
-                    status_pass = False
+        # Validate mission ID
+        if m_id not in range(1, 11):
+            await ctx.send("❌ Invalid mission ID. Must be between 1 and 10.")
+            session.close()
+            return
 
-            if status_pass:
-                embed = discord.Embed(colour=discord.Colour.from_rgb(0, 0, 0),
-                                      title=f"Confirm Edited Mission Details",
-                                      description=f"**Title:** {' '.join(x.capitalize() for x in targeted_mission.title.split())}\n\n **Faction:** {faction.value}\n\n **Difficulty:** {targeted_mission.difficulty}\n\n **Reward:** <:credits:1099938341467738122>{targeted_mission.reward:,}\n\n **Description:** {targeted_mission.description}")
-                embed.set_footer(text="✅ to confirm, or ❌ to cancel.")
+        try:
+            targeted_mission = \
+            session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()[m_id - 1]
+        except IndexError:
+            await ctx.send("❌ No mission found for the given ID and faction.")
+            session.close()
+            return
 
-                bot_response = await ctx.send(embed=embed)
+        success = True
 
-                await bot_response.add_reaction("✅")
-                await bot_response.add_reaction("❌")
+        if mission_field.value == 'Title':
+            mission_value = ' '.join(x.capitalize() for x in mission_value.split())
+            targeted_mission.title = mission_value
 
-                def check(reaction, user):
-                    return user == ctx.author and str(reaction.emoji) in ["✅", "❌"] and reaction.message == bot_response
+        elif mission_field.value == 'Description':
+            targeted_mission.description = mission_value
 
-                try:
-                    reaction, user = await self.bot.wait_for('reaction_add', timeout=60.0, check=check)
-                    if str(reaction.emoji) == "✅":
-                        session.commit()
-                        await ctx.send("Confirmed! Mission edited.")
+        elif mission_field.value == 'Reward':
+            try:
+                targeted_mission.reward = int(mission_value)
+            except ValueError:
+                await ctx.send("❌ Reward must be a valid integer.")
+                session.close()
+                return
 
-                    elif str(reaction.emoji) == "❌":
-                        await ctx.send("Canceled request.")
+        elif mission_field.value == 'Difficulty':
+            allowed = ['Easy', 'Medium', 'Hard', 'Extreme', 'Impossible']
+            diff_value = mission_value.title()
+            if diff_value in allowed:
+                targeted_mission.difficulty = diff_value
+            else:
+                await ctx.send(f"❌ Invalid difficulty. Choose one of: {', '.join(allowed)}")
+                session.close()
+                return
 
-                except asyncio.TimeoutError:
-                    await ctx.send("Confirmation timed out.")
-        else:
-            await ctx.send("Mission not found.")
+        # Faction-based color
+        faction_colors = {
+            "Rogue": discord.Colour.from_str("#dc143c"),
+            "Imperial": discord.Colour.from_rgb(0, 0, 0),
+            "Rebel": discord.Colour.from_str("#ffa500"),
+            "Mandalorian": discord.Colour.from_str("#9500ff")
+        }
+        embed_color = faction_colors.get(faction.value, discord.Colour.default())
+
+        embed = discord.Embed(
+            colour=embed_color,
+            title=f"🛠️ Confirm Edited Mission - {faction.value} (ID: {m_id})",
+            description=(
+                f"**🎯 Title:** {targeted_mission.title}\n"
+                f"**⚙️ Difficulty:** {targeted_mission.difficulty}\n"
+                f"**💰 Reward:** <:credits:1099938341467738122> {targeted_mission.reward:,}\n"
+                f"**📜 Description:** {targeted_mission.description}"
+            )
+        )
+        embed.set_footer(text="✅ to confirm, ❌ to cancel.")
+
+        bot_response = await ctx.send(embed=embed)
+        await bot_response.add_reaction("✅")
+        await bot_response.add_reaction("❌")
+
+        def check(reaction, user):
+            return user == ctx.author and str(reaction.emoji) in ["✅", "❌"] and reaction.message.id == bot_response.id
+
+        try:
+            reaction, user = await self.bot.wait_for('reaction_add', timeout=60.0, check=check)
+            if str(reaction.emoji) == "✅":
+                session.commit()
+                await ctx.send("✅ Mission updated successfully.")
+            else:
+                await ctx.send("❌ Edit canceled.")
+        except asyncio.TimeoutError:
+            await ctx.send("⏰ Confirmation timed out.")
+
         session.close()
 
 
@@ -230,6 +303,15 @@ class MissionCog(commands.Cog):
         await ctx.defer()
         session = Session()
         missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+
+        faction_colors = {
+            "Rogue": discord.Colour.from_rgb(220, 20, 60),
+            "Imperial": discord.Colour.from_rgb(0, 0, 0),
+            "Rebel": discord.Colour.from_rgb(255, 165, 0),
+            "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
+        }
+        embed_color = faction_colors.get(faction.value, discord.Colour.default())
+
         embed_description = ""
         for idx, mission in enumerate(missions, start=1):
             description_str = str(mission.description)
@@ -239,13 +321,15 @@ class MissionCog(commands.Cog):
                 else description_str
             )
             embed_description += (
-                f"\n\n**<:credits:1099938341467738122>{mission.reward:,} - ID: {idx} - "
-                f"{mission.title} - {mission.difficulty}**\n`Status: {mission.availability}`\n"
-                f"{mission_description}"
+                f"**#{idx} — {mission.title}**\n"
+                f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
+                f"> 📌 Status: `{mission.availability}`\n"
+                f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
+                f"> 📝 {mission_description}\n\n"
             )
         embed = discord.Embed(
-            colour=discord.Colour.from_rgb(0, 0, 0),
-            title=f"=== {faction.value} Mission Board ===",
+            colour=embed_color,
+            title=f"📜 {faction.value} Mission Board",
             description=embed_description
         )
         await ctx.send(embed=embed)
@@ -264,14 +348,33 @@ class MissionCog(commands.Cog):
     async def mission_info(self, ctx, m_id: int, faction: app_commands.Choice[str]):
         session = Session()
         if m_id not in range(1, 11):
-            await ctx.send("Invalid mission ID. Enter an ID number from 1-10")
+            await ctx.send("❌ Invalid mission ID. Please enter a number from 1 to 10.")
         else:
-            mission = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()[
-                m_id - 1]
+            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+            if m_id > len(missions):
+                await ctx.send("❌ That mission ID doesn't exist for the selected faction.")
+                session.close()
+                return
+            mission = missions[m_id - 1]
+
+            faction_colors = {
+                "Rogue": discord.Colour.from_rgb(220, 20, 60),
+                "Imperial": discord.Colour.from_rgb(0, 0, 0),
+                "Rebel": discord.Colour.from_rgb(255, 165, 0),
+                "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
+            }
+            embed_color = faction_colors.get(faction.value, discord.Colour.default())
+
             embed = discord.Embed(
-                colour=discord.Colour.from_rgb(0, 0, 0),
-                title=f"=== {faction.value} Mission Info - ID: {m_id} ===",
-                description=f"**<:credits:1099938341467738122>{mission.reward:,} - {mission.title} - {mission.difficulty}**\n`Status: {mission.availability}`\n{mission.description}"
+                colour=embed_color,
+                title=f"📘 {faction.value} Mission Info — ID: {m_id}",
+                description=(
+                    f"**🎯 {mission.title}**\n"
+                    f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
+                    f"> 📌 Status: `{mission.availability}`\n"
+                    f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
+                    f"> 📝 Description:\n{mission.description}"
+                )
             )
             await ctx.send(embed=embed)
         session.close()
@@ -290,14 +393,35 @@ class MissionCog(commands.Cog):
     async def delete_mission(self, ctx, m_id: int, faction: app_commands.Choice[str]):
         session = Session()
         if m_id not in range(1, 11):
-            await ctx.send("Invalid mission ID. Enter an ID number from 1-10")
+            await ctx.send("❌ Invalid mission ID. Please enter a number from 1 to 10.")
         else:
-            mission = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()[
-                m_id - 1]
+            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+
+            if m_id > len(missions):
+                await ctx.send("❌ That mission ID doesn't exist for the selected faction.")
+                session.close()
+                return
+
+            mission = missions[m_id - 1]
+
+            faction_colors = {
+                "Rogue": discord.Colour.from_rgb(220, 20, 60),
+                "Imperial": discord.Colour.from_rgb(0, 0, 0),
+                "Rebel": discord.Colour.from_rgb(255, 165, 0),
+                "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
+            }
+            embed_color = faction_colors.get(faction.value, discord.Colour.default())
+
             embed = discord.Embed(
-                colour=discord.Colour.from_rgb(0, 0, 0),
-                title=f"=== Delete {faction.value} Mission - ID: {m_id} ===",
-                description=f"**<:credits:1099938341467738122>{mission.reward:,} - {mission.title} - {mission.difficulty}**\n{mission.description}"
+                colour=embed_color,
+                title=f"🗑️ Confirm Deletion — {faction.value} Mission ID: {m_id}",
+                description=(
+                    f"**🎯 {mission.title}**\n"
+                    f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
+                    f"> 📌 Status: `{mission.availability}`\n"
+                    f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
+                    f"> 📝 Description:\n{mission.description}"
+                )
             )
             embed.set_footer(text="✅ to confirm, or ❌ to cancel.")
 

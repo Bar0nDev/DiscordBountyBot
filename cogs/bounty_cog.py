@@ -70,7 +70,7 @@ class BountyCog(commands.Cog):
                     f"**Target:** {target}\n"
                     f"**Priority:** {star_display}\n"
                     f"**Reward:** <:credits:1099938341467738122>{reward:,}\n"
-                    f"**Client:** {ctx.author}\n"
+                    f"**Client:** {client}\n"
                     f"**Description:** {description}"
                 )
             )
@@ -141,12 +141,19 @@ class BountyCog(commands.Cog):
         for i, bounty in enumerate(bounties, start=1):
             star_display = "★" * (6 - bounty.stars) + "☆" * (bounty.stars - 1)
 
+            description_str = str(bounty.description)
+            bounty_description = (
+                description_str[:250] + "..."
+                if len(description_str) > 250
+                else description_str
+            )
+
             embed_description += (
                 f"**#{i} — `{bounty.target}`**\n"
                 f"> 🚨 Priority: {star_display}\n"
                 f"> 👤 Client: `{bounty.client}`\n"
                 f"> 💰 Reward: <:credits:1099938341467738122> **{bounty.reward:,}**\n"
-                f"> 📝 {bounty.description}\n\n"
+                f"> 📝 {bounty_description}\n\n"
             )
 
         embed = discord.Embed(
