@@ -17,7 +17,10 @@ client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
 PRIMARY_MODEL = "gemini-2.5-flash-preview-05-20"
 
-base_url = "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/"
+base_url = os.getenv(
+    "AVATAR_BASE_URL",
+    "https://github.com/Bar0nDev/SW-AI-GM-Pics/blob/main/gm%20pics/"
+).rstrip("/") + "/"
 
 character_avatars = [
     ("Blue Armor Mandalorian", "Blue%20armor%20Mandalorian.png"),
@@ -132,6 +135,10 @@ class GMCog(commands.Cog):
         difficulty="Optional difficulty (Easy, Medium, Hard, etc.).")
     @commands.has_role("Game Master")
     async def gamemaster_start(self, ctx, character: str, location: str, scenario: str, difficulty: str = "default"):
+        interaction = ctx.interaction
+        if interaction is not None:
+            await ctx.defer(ephemeral=True)
+
         channel_id = ctx.channel.id
 
         # Send reports of GM sessions
@@ -139,18 +146,14 @@ class GMCog(commands.Cog):
             report_channel = self.bot.get_channel(991747728298225764)
             await report_channel.send(
                 f"### 🤖 AI Gamemaster Activated\n"
-                f"**Channel:** <#{channel_id}>\n\n"
-                f"**🧑 Character Info:**\n> {character}\n\n"
-                f"**📍 Location Info:**\n> {location}\n\n"
-                f"**🎬 Scenario Info:**\n> {scenario}"
-                f"**🦾 Difficulty:**\n> {difficulty}"
+                f"**Channel:** <#{channel_id}>"
             )
         except:
             pass
 
         rp_sessions = load_rp_sessions()
 
-        if channel_id not in rp_sessions or rp_sessions[channel_id] != ():
+        if channel_id not in rp_sessions or not rp_sessions[channel_id]:
             rp_sessions[channel_id] = {
                 "scene_info": {"character": character, "location": location, "scenario": scenario, "difficulty": difficulty},
                 "summary": "",
@@ -159,14 +162,22 @@ class GMCog(commands.Cog):
 
             save_rp_sessions(rp_sessions)
 
-            await ctx.send("Gamemaster mode activated for this channel! Now listening to messages. "
-                           "Remember to use '(' when talking out of RP.", delete_after=60)
+            await ctx.channel.send(
+                "✅ Gamemaster session started. R0-U41 is now listening in this channel.",
+                delete_after=60
+            )
+            if interaction is not None:
+                await interaction.delete_original_response()
 
             await ctx.invoke(self.bot.get_command("gamemaster_chat"), author="Gamemaster",
                              msg="Set up the scene, environment, or situation for the player")
         else:
             await ctx.send(
-                "A scenario is already in progress. Finish the current mission with /gamemaster_stop or change scenario location.")
+                "A scenario is already in progress. Finish the current mission with /gamemaster_stop or change scenario location.",
+                ephemeral=True
+            )
+            if interaction is not None:
+                await interaction.delete_original_response()
 
 
     async def gamemaster_chat_core(self, ctx, author=None, msg=None, new_channel=None, new_channel_msg=None):
@@ -630,7 +641,7 @@ class GMCog(commands.Cog):
         )
         embed.set_footer(
             text="Here are the ongoing Game Master sessions. To end a session, use /gamemaster_stop in the channel!")
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
     async def handle_gamemaster_message(self, message):

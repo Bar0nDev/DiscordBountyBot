@@ -1,6 +1,8 @@
-# 🛰️ AI Gamemaster Discord Bot
+# 🛰️ R0-U41 AI Gamemaster Discord Bot
 
-A fully modular, AI-powered Discord bot tailored for immersive Star Wars-themed roleplaying and economy gameplay. Packed with features like mission & bounty tracking, AI storytelling, and automated rewards—built to scale with your RP community.
+R0-U41 is a fully modular, AI-powered Discord bot tailored for immersive Star Wars-themed roleplaying and economy gameplay. Packed with features like mission & bounty tracking, AI storytelling, and automated rewards—built to scale with your RP community.
+
+Gamemaster avatars use the public `gm pics` directory. Set `AVATAR_BASE_URL` in `.env` to that directory's public URL when hosting the assets elsewhere; if omitted, the bot uses the current image repository.
 
 ---
 
