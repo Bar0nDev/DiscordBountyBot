@@ -515,6 +515,11 @@ class GMCog(commands.Cog):
             except Exception as e:
                 print(f"GM Stop Session Summarization failed: {e}")
             target_channel = self.bot.get_channel(991747728298225764)
+            if target_channel is None:
+                try:
+                    target_channel = await self.bot.fetch_channel(991747728298225764)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+                    print(f"GM report channel unavailable: {e}")
 
             if summary_prompt:
                 response = client.models.generate_content(
@@ -550,7 +555,12 @@ class GMCog(commands.Cog):
                 else:
                     print("Error: Could not find the target channel.")
             else:
-                await target_channel.send("A Game Master Session has been stopped. Unfortunately, no summary was generated.")
+                if target_channel:
+                    await target_channel.send(
+                        "A Game Master Session has been stopped. Unfortunately, no summary was generated."
+                    )
+                else:
+                    print("Error: Could not find the target channel; skipping stop report.")
 
 
             del rp_sessions[channel_id]
