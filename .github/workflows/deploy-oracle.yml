@@ -39,6 +39,7 @@ jobs:
           set -euo pipefail
           ssh_opts="-i $RUNNER_TEMP/ssh/oracle_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts"
           rsync -az \
+            --delete \
             --exclude '.env' \
             --exclude '.git/' \
             --exclude '.github/' \
@@ -103,13 +104,22 @@ jobs:
           set -euo pipefail
           app=/home/opc/bots/R0U41
           tmux has-session -t R0U41
+          seen=0
           for _ in $(seq 1 15); do
+            found=false
             for pid in $(pgrep -f '[p]ython main.py' || true); do
               if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$app" ]; then
+                found=true
                 echo "R0-U41 running with pid $pid"
-                exit 0
+                break
               fi
             done
+            if [ "$found" = true ]; then
+              seen=$((seen + 1))
+              [ "$seen" -ge 3 ] && exit 0
+            else
+              seen=0
+            fi
             sleep 1
           done
           echo 'R0-U41 process was not found after restart.' >&2
