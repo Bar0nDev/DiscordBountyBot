@@ -5,3 +5,11 @@ nochat_channels.pk1
 rp_sessions.pk1
 discloud.config
 archive
+
+# Local IDE and Python runtime artifacts
+.idea/inspectionProfiles/Project_Default.xml
+.idea/shelf/
+.idea/workspace.xml
+__pycache__/
+*/__pycache__/
+*.py[cod]

@@ -10,6 +10,7 @@ import os
 from pydantic import BaseModel
 from sqlalchemy.exc import PendingRollbackError
 from sqlalchemy import asc
+from utils import moderator_check
 
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
@@ -48,7 +49,8 @@ class MissionCog(commands.Cog):
         self.bot = bot
 
     @commands.hybrid_command(name="add_mission", description='Adds a new mission')
-    @commands.has_role("Game Master")
+    @commands.check(moderator_check)
+    @app_commands.check(moderator_check)
     @app_commands.describe(title="Title of mission", description="Job description",
                            reward="How much is earned upon completion?",
                            difficulty="Choose: Easy, Medium, Hard, Extreme, Impossible.",
@@ -127,7 +129,8 @@ class MissionCog(commands.Cog):
 
 
     @commands.hybrid_command(name="mission_status", description="Claims a mission and sets to 'in progress' or vice versa.")
-    @commands.has_role("Game Master")
+    @commands.check(moderator_check)
+    @app_commands.check(moderator_check)
     @app_commands.describe(faction='What faction is this mission for?',
                            m_id="What is the mission's ID?"
                            )
@@ -188,7 +191,8 @@ class MissionCog(commands.Cog):
 
 
     @commands.hybrid_command(name="edit_mission", description='Edits a mission')
-    @commands.has_role("Game Master")
+    @commands.check(moderator_check)
+    @app_commands.check(moderator_check)
     @app_commands.describe(faction='What faction is this mission for?',
                            m_id="What is the mission's ID?",
                            mission_field='What mission info to edit?',
@@ -381,7 +385,8 @@ class MissionCog(commands.Cog):
 
 
     @commands.hybrid_command(name="delete_mission", description="Delete mission by specified mission ID (1-10).")
-    @commands.has_role('Game Master')
+    @commands.check(moderator_check)
+    @app_commands.check(moderator_check)
     @app_commands.describe(m_id="ID of mission",
                            faction='What faction mission to delete?')
     @app_commands.choices(faction=[
@@ -446,6 +451,7 @@ class MissionCog(commands.Cog):
 
 
     @app_commands.command(name="generate_missions", description="Generate missions for the specified faction")
+    @app_commands.check(moderator_check)
     @app_commands.describe(faction='What faction to generate missions for?', amount="Number of missions to generate (default: Fills up mission board to 10 total missions)")
     @app_commands.choices(faction=[
         app_commands.Choice(name="Rogue", value="Rogue"),

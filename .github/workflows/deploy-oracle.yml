@@ -1,0 +1,117 @@
+name: Deploy R0-U41 to Oracle
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r0-u41-oracle-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the release
+        uses: actions/checkout@v4
+
+      - name: Configure Oracle SSH
+        env:
+          ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          ORACLE_KNOWN_HOSTS: ${{ secrets.ORACLE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$ORACLE_SSH_KEY"
+          test -n "$ORACLE_KNOWN_HOSTS"
+          install -d -m 700 "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$ORACLE_SSH_KEY" > "$RUNNER_TEMP/ssh/oracle_key"
+          printf '%s\n' "$ORACLE_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/ssh/oracle_key" "$RUNNER_TEMP/ssh/known_hosts"
+
+      - name: Sync application files
+        run: |
+          set -euo pipefail
+          ssh_opts="-i $RUNNER_TEMP/ssh/oracle_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/ssh/known_hosts"
+          rsync -az \
+            --exclude '.env' \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.idea/' \
+            --exclude '.venv/' \
+            --exclude 'venv/' \
+            --exclude 'keys/' \
+            --exclude 'archive/' \
+            --exclude 'data/' \
+            --exclude 'sessions/' \
+            --exclude '__pycache__/' \
+            --exclude '*.pyc' \
+            --exclude '*.pkl' \
+            --exclude '*.pk1' \
+            --exclude '*.db' \
+            -e "ssh $ssh_opts" \
+            ./ opc@129.146.36.195:/home/opc/bots/R0U41/
+
+      - name: Install dependencies and restart tmux session
+        env:
+          SSH_OPTS: -i ${{ runner.temp }}/ssh/oracle_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${{ runner.temp }}/ssh/known_hosts
+        run: |
+          set -euo pipefail
+          ssh $SSH_OPTS opc@129.146.36.195 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          app=/home/opc/bots/R0U41
+          session=R0U41
+          target="$session:0"
+
+          cd "$app"
+          python -m pip install --user --disable-pip-version-check -r requirements.txt
+
+          if tmux has-session -t "$session" 2>/dev/null; then
+            tmux send-keys -t "$target" C-c
+            for _ in $(seq 1 15); do
+              running=false
+              for pid in $(pgrep -f '[p]ython main.py' || true); do
+                if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$app" ]; then
+                  running=true
+                  break
+                fi
+              done
+              [ "$running" = false ] && break
+              sleep 1
+            done
+            if [ "$running" = true ]; then
+              echo 'R0-U41 did not stop after Ctrl-C.' >&2
+              exit 1
+            fi
+            tmux send-keys -t "$target" "cd $app && python main.py" C-m
+          else
+            tmux new-session -d -s "$session" -c "$app" "python main.py"
+          fi
+          REMOTE
+
+      - name: Verify the tmux process
+        env:
+          SSH_OPTS: -i ${{ runner.temp }}/ssh/oracle_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${{ runner.temp }}/ssh/known_hosts
+        run: |
+          set -euo pipefail
+          ssh $SSH_OPTS opc@129.146.36.195 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          app=/home/opc/bots/R0U41
+          tmux has-session -t R0U41
+          for _ in $(seq 1 15); do
+            for pid in $(pgrep -f '[p]ython main.py' || true); do
+              if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$app" ]; then
+                echo "R0-U41 running with pid $pid"
+                exit 0
+              fi
+            done
+            sleep 1
+          done
+          echo 'R0-U41 process was not found after restart.' >&2
+          exit 1
+          REMOTE

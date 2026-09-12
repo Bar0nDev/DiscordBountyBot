@@ -4,6 +4,8 @@ R0-U41 is a fully modular, AI-powered Discord bot tailored for immersive Star Wa
 
 Gamemaster avatars use the public `gm pics` directory. Set `AVATAR_BASE_URL` in `.env` to that directory's public URL when hosting the assets elsewhere; if omitted, the bot uses the current image repository.
 
+Mission and bounty administration accepts the common moderator role names `Moderator`, `Mod`, `Mods`, and `Moderators` by default. For an exact permission boundary, set `MODERATOR_ROLE_IDS` in `.env` to a comma-separated list of trusted Discord role IDs; configured IDs take precedence over role names. `MODERATOR_ROLE_NAMES` can customize the name fallback when IDs are not configured.
+
 ---
 
 ## 🚀 Features
@@ -44,8 +46,14 @@ Gamemaster avatars use the public `gm pics` directory. Set `AVATAR_BASE_URL` in 
 
 | Command                | Description                             |
 |------------------------| --------------------------------------- |
-| `/add_mission`         | Create a new mission (Game Master only) |
-| `/edit_mission`        | Update mission title, reward, etc.      |
+| `/add_mission`         | Create a new mission (Moderator role)   |
+| `/edit_mission`        | Update mission title, reward, etc. (Moderator role) |
+| `/mission_status`      | Toggle mission availability (Moderator role) |
+| `/delete_mission`      | Delete a mission (Moderator role)       |
+| `/add_bounty`          | Create a new bounty (Moderator role)    |
+| `/delete_bounty`       | Delete a bounty (Moderator role)        |
+| `/generate_missions`   | Generate missions (Moderator role)      |
+| `/generate_bounties`   | Generate bounties (Moderator role)      |
 | `/all_bounties`        | View or assign bounties by faction      |
 | `/gamemaster_start`    | Start a new AI RP scene                 |
 | `/gamemaster_continue` | Continue existing scene with prompt     |
@@ -79,10 +87,10 @@ Gamemaster avatars use the public `gm pics` directory. Set `AVATAR_BASE_URL` in 
 
 ## 🛡️ Permissions
 
-This bot uses **role-based access**. Only users with the `Game Master` role can:
+This bot uses **role-based access**:
 
-* Add, edit, or delete missions
-* Trigger AI GM sessions or edit sessions
+* Users with `Moderator`, `Mod`, `Mods`, or `Moderators` can create, edit, change status, delete, and generate missions and bounties.
+* Users with the `Game Master` role can trigger AI GM sessions and use Game Master session commands.
 
 ---
 

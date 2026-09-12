@@ -7,7 +7,7 @@ from google.genai import types
 from pydantic import BaseModel
 import os
 import random
-from utils import *
+from session_utils import load_rp_sessions, save_rp_sessions
 
 MAX_GM_RECENT = 30
 SUMMARIZE_GM_BATCH = 15

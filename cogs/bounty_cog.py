@@ -9,6 +9,7 @@ from google.genai import types
 import os
 from pydantic import BaseModel
 from sqlalchemy import asc
+from utils import moderator_check
 
 
 client = genai.Client(api_key=os.getenv("API_KEY"))
@@ -48,7 +49,8 @@ class BountyCog(commands.Cog):
         self.bot = bot
 
     @commands.hybrid_command(name="add_bounty", description='Adds a new bounty')
-    @commands.has_role("Game Master")
+    @commands.check(moderator_check)
+    @app_commands.check(moderator_check)
     @app_commands.describe(target="Who does the bounty target?",
                            stars="How much of a priority is the bounty? Enter a number from 1-5, with 1 being highest priority.",
                            description="Bounty description or additional notes?",
@@ -166,7 +168,8 @@ class BountyCog(commands.Cog):
 
 
     @commands.hybrid_command(name="delete_bounty", description="Delete bounty by specified bounty ID (1-10).")
-    @commands.has_role('Game Master')
+    @commands.check(moderator_check)
+    @app_commands.check(moderator_check)
     @app_commands.describe(b_id="ID of bounty")
     async def delete_bounty(self, ctx, b_id: int):
         await ctx.defer()
@@ -211,6 +214,7 @@ class BountyCog(commands.Cog):
 
 
     @app_commands.command(name="generate_bounties", description="Generate bounties")
+    @app_commands.check(moderator_check)
     @app_commands.describe(amount="Number of bounties to generate (default: Fills up bounty board to 10 total bounties)")
     async def generate_bounties(self, interaction: discord.Interaction, amount: int = 10):
         await interaction.response.defer()
