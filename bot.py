@@ -6,6 +6,8 @@ import os
 import discord
 
 dotenv.load_dotenv()
+if not os.getenv("API_KEY") and os.getenv("GEMINI_API_KEY"):
+    os.environ["API_KEY"] = os.environ["GEMINI_API_KEY"]
 
 
 def run_discord_bot():
