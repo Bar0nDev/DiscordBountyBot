@@ -5,7 +5,7 @@ discord~=1.7.3
 python-dotenv~=0.19.2
 unbelievaboat==2.1.2
 google-genai==1.12.1
-audioop-lts
+audioop-lts; python_version >= "3.13"
 apscheduler
 aiohttp
 pydantic
