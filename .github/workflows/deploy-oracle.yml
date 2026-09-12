@@ -47,6 +47,8 @@ jobs:
             --exclude '.venv/' \
             --exclude 'venv/' \
             --exclude 'keys/' \
+            --exclude 'utils/utils.py' \
+            --exclude 'utils/gm_success_system.py' \
             --exclude 'archive/' \
             --exclude 'data/' \
             --exclude 'sessions/' \
