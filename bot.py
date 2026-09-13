@@ -1,13 +1,10 @@
 import asyncio
 from discord.ext import commands
-from discord import app_commands
 import dotenv
 import os
 import discord
 
 dotenv.load_dotenv()
-if not os.getenv("API_KEY") and os.getenv("GEMINI_API_KEY"):
-    os.environ["API_KEY"] = os.environ["GEMINI_API_KEY"]
 
 
 def run_discord_bot():
@@ -21,9 +18,21 @@ def run_discord_bot():
         await bot.change_presence(
             activity=discord.Activity(type=discord.ActivityType.playing, name=">help | Indexing..."))
 
+    ALLOWED_GUILD_ID = 1389425312915263509
+
+    async def verify_guild(guild):
+        if guild.id != ALLOWED_GUILD_ID:
+            print(f"Leaving unauthorized guild: {guild.name} ({guild.id})")
+            await guild.leave()
+
+    @bot.event
+    async def on_guild_join(guild):
+        await verify_guild(guild)
 
     @bot.event
     async def on_ready():
+        for guild in bot.guilds:
+            await verify_guild(guild)
         news_cog = bot.get_cog("NewsCog")
         if news_cog:
             await news_cog.handle_news_report()
@@ -32,31 +41,14 @@ def run_discord_bot():
 
     @bot.event
     async def on_command_error(ctx, error):
-        if isinstance(error, commands.CheckFailure):
-            if ctx.interaction is not None:
-                if ctx.interaction.response.is_done():
-                    await ctx.interaction.followup.send(
-                        "🚫 You do not have the required role to use this command.",
-                        ephemeral=True
-                    )
-                else:
-                    await ctx.interaction.response.send_message(
-                        "🚫 You do not have the required role to use this command.",
-                        ephemeral=True
-                    )
-            else:
+        if isinstance(error, commands.MissingRole):
+            try:
+                await ctx.interaction.response.send_message(
+                    "🚫 You do not have the required role to use this command.",
+                    ephemeral=True
+                )
+            except:
                 await ctx.send("🚫 You do not have the required role.", delete_after=10)
-
-    @bot.tree.error
-    async def on_app_command_error(interaction, error):
-        if isinstance(error, app_commands.CheckFailure):
-            message = "🚫 You do not have the required role to use this command."
-            if interaction.response.is_done():
-                await interaction.followup.send(message, ephemeral=True)
-            else:
-                await interaction.response.send_message(message, ephemeral=True)
-        else:
-            await app_commands.CommandTree.on_error(bot.tree, interaction, error)
 
 
     @bot.hybrid_command(name="help", description="Shows R0-U41's help menu")
@@ -70,17 +62,13 @@ def run_discord_bot():
         embed.add_field(name="Show bounties",
                         value="Run /all_bounties (preferred) or >all_bounties to show available bounties.")
         embed.add_field(name="Add bounty",
-                        value="`Moderator role required`\nRun /add_bounty (preferred) or >add_bounty to add a new bounty.\n\nExample Command: >add_bounty 'Jabba' 'I do not like him.' '300'\n\n")
+                        value="Run /add_bounty (preferred) or >add_bounty to add a new bounty. If running >add_mission, the command takes in three inputs separated by spaces (title, description, reward).\n\nExample Command: >add_bounty 'Jabba' 'I don't like him. I heard he's chilling in his palace on Tatooine.' '300'\n\n")
         embed.add_field(name="Add mission",
-                        value="`Moderator role required`\nRun /add_mission (preferred) or >add_mission to add a new mission.\n\nExample Command: >add_mission 'Destroy Rebel Base' 'A rebel base on Tatooine.' '200' 'Easy' 'Imperial'\n\n")
-        embed.add_field(name="Edit/status missions",
-                        value="`Moderator role required`\nUse /edit_mission or >edit_mission to update a mission, and /mission_status or >mission_status to toggle its availability.\n\n")
+                        value="`Only available to @Game Master`\nRun /add_mission (preferred) or >add_mission to add a new mission. If running >add_mission, the command takes in five inputs separated by spaces (title, description, reward, difficulty- Very Easy, Easy, Medium, Hard, Very Hard, Expert, faction- Rogue, Imperial, Rebel, Mandalorian).\n\nExample Command: >add_mission 'Destroy Rebel Base' 'A big rebel base on Kuwait' '200' 'Easy' 'Imperial'\n\n")
         embed.add_field(name="Delete mission",
-                        value="`Moderator role required`\nRun /delete_mission (preferred) or >delete_mission to delete a mission.\n\nExample Command: >delete_mission 2 'Mandalorian'\n\n")
+                        value="`Only available to @Game Master`\nRun /delete_mission (preferred) or >delete_mission to delete a mission. If running >delete_mission, the command takes in two inputs (mission_id, faction- Rogue, Imperial, Rebel, Mandalorian).\n\nExample Command: >delete_mission 2 'Mandalorian'\n\n")
         embed.add_field(name="Delete bounty",
-                        value="`Moderator role required`\nRun /delete_bounty (preferred) or >delete_bounty to delete a bounty.\n\nExample Command: >delete_bounty 2\n\n")
-        embed.add_field(name="Generate items",
-                        value="`Moderator role required`\nUse /generate_missions or /generate_bounties to fill the boards with AI-generated items.\n\n")
+                        value="`Only available to @Game Master`\nRun /delete_bounty (preferred) or >delete_bounty to delete a bounty. If running >delete_bounty, the command takes in one input (bounty_id).\n\nExample Command: >delete_bounty 2\n\n")
         embed.set_footer(text="Built by BaronViper#8694")
         await ctx.send(embed=embed)
 
@@ -89,10 +77,6 @@ def run_discord_bot():
     async def on_message(message):
         if message.author == bot.user:
             return
-
-        econ_cog = bot.get_cog("EconCog")
-        if econ_cog:
-            await econ_cog.process_bumps(message)
 
         chat_cog = bot.get_cog("ChatCog")
         if chat_cog:
@@ -114,3 +98,4 @@ def run_discord_bot():
 
 
     asyncio.run(main())
+

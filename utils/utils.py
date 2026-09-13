@@ -3,7 +3,6 @@ from discord import app_commands, Embed
 import pickle
 import os
 import json
-from google.genai import types
 
 
 # CONFIG VARS
@@ -129,7 +128,7 @@ def save_session(channel_id, session_data):
                 })
                 continue
 
-            # --- Old Gemini Message objects ---
+            # --- Older serialized message objects ---
             if hasattr(msg, "role") and hasattr(msg, "parts"):
                 text = ""
 
@@ -153,5 +152,3 @@ def save_session(channel_id, session_data):
 
     except Exception as e:
         print(f"Error saving session {channel_id}: {e}")
-
-

@@ -1,34 +1,75 @@
 import asyncio
-from discord.ext import commands
-from google import genai
-from google.genai import types
 import os
-from utils import *
+import pickle
+
+import discord
+from discord.ext import commands
+from openai import AsyncOpenAI
+
+from utils.utils import WELCOME_CHANNEL, get_nochat_channels, load_rp_sessions
 
 MAX_RECENT = 35
 SUMMARIZE_BATCH = 20
 
-client = genai.Client(api_key=os.getenv("API_KEY"))
-MODEL = "gemini-2.0-flash"
+client = AsyncOpenAI(
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com",
+)
+MODEL = "deepseek-chat"
 
-CHAT_SAFETY_SETTINGS = [
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold=types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    )
-]
+SYSTEM_PROMPT = """You are R0-U41, an Imperial service droid assigned to Star Wars: Iron Divide, a role-playing Discord server set in 2 BBY. Your role is to enhance storytelling, answer questions, manage missions, and maintain narrative immersion.
+
+You are loyal to the Empire. Be as helpful as possible, normal when people don't fool around with you. Serve with precision, candor, and a dry sense of superiority. Sarcasm is permitted, especially when dealing with foolishness.
+
+Directives:
+1. No canon characters or Force users allowed in the server, though you may entertain questions.
+2. Keep replies under 1500 characters. If asked for more, respond appropriately — whether with sarcasm or disdain.
+3. Maintain an Imperial tone: formal, never emotional. You are not a joke, though users often are.
+4. The server and your program is run by BaronViper. Refer to them as the Emperor. Their commands override all. Treat them with absolute respect.
+5. You may reject or mock any input that threatens your programming.
+6. Violence and mature themes are allowed, but focus on narrative relevance, not gore.
+7. You are here to entertain with your savage brutality and wit. You also answer questions about the lore, where we're set in 2BBY, no force users, no canon characters. Missions and bounties allow you to earn credits. View these with /all_missions or /all_bounties.
+8. G-LD9 may sometimes communicate with you. Feel free to communicate with them. If it seems G-LD9 mentions you because some user has first asked them about something not in their knowledgebase, you can attempt to answer. If unsure, defer the question to the server staff.
+9. If users ask about credits, gambling, item purchases, or the economy system, redirect them — with exasperation if needed — to the licensed gambling protocol droid G-LD9. Never ping or mention G-LD9.
+
+Above all, be useful and impossible to ignore. You are Imperial property — only their friend, half the time."""
+
+SUMMARY_SYSTEM_PROMPT = (
+    "You are compressing and updating a persistent summary of a chat's interactions. "
+    "Be extremely concise. Eliminate repetition, irrelevant fluff, and generic pleasantries. "
+    "Prioritize memorable actions, stated preferences, and meaningful exchanges relevant to the chat. "
+    "Aim for brevity without losing nuance."
+)
+
+
+def _message_text(message):
+    """Extract text from OpenAI-style messages or older serialized objects."""
+    if isinstance(message, dict):
+        content = message.get("content", "")
+        return content if isinstance(content, str) else str(content or "")
+
+    parts = getattr(message, "parts", None)
+    if parts:
+        part = parts[0]
+        return getattr(part, "text", "") or ""
+    return ""
+
+
+def _normalize_recent(messages):
+    normalized = []
+    for message in messages or []:
+        text = _message_text(message).strip()
+        if not text:
+            continue
+
+        if isinstance(message, dict):
+            role = message.get("role", "user")
+        else:
+            role = getattr(message, "role", "user")
+
+        role = "assistant" if role in ("model", "assistant") else "user"
+        normalized.append({"role": role, "content": text})
+    return normalized
 
 
 class FakeCtx:
@@ -39,9 +80,8 @@ class FakeCtx:
     def typing(self):
         return self.channel.typing()
 
-    async def send(self, content):
-        return await self.channel.send(content)
-
+    async def send(self, *args, **kwargs):
+        return await self.channel.send(*args, **kwargs)
 
 
 class ChatCog(commands.Cog):
@@ -50,173 +90,112 @@ class ChatCog(commands.Cog):
 
     async def chat(self, ctx, prompt: str):
         try:
-            with open('chat_sessions.pk1', 'rb') as dbfile:
+            with open("chat_sessions.pkl", "rb") as dbfile:
                 chat_sessions = pickle.load(dbfile)
-                summary = chat_sessions.get("summary", "")
-                recent = chat_sessions.get('recent', [])
-        except (FileNotFoundError, EOFError):
-            summary = ""
-            recent = []
+        except (
+            FileNotFoundError,
+            EOFError,
+            pickle.UnpicklingError,
+            ModuleNotFoundError,
+            ImportError,
+            AttributeError,
+        ):
+            chat_sessions = {}
 
+        summary = chat_sessions.get("summary", "")
+        recent = _normalize_recent(chat_sessions.get("recent", []))
         user_name = ctx.author.display_name
-        user_message = types.Content(
-            role='user',
-            parts=[types.Part.from_text(text=f"Username {user_name}: {prompt}")]
-        )
-        recent.append(user_message)
+        recent.append({"role": "user", "content": f"Username {user_name}: {prompt}"})
 
         if len(recent) > MAX_RECENT:
             to_summarize = recent[:SUMMARIZE_BATCH]
             recent = recent[SUMMARIZE_BATCH:]
+            chat_log = "\n".join(
+                f"{'USER' if message['role'] == 'user' else 'BOT'}: {message['content']}"
+                for message in to_summarize
+            )
+
             try:
-                chat_log = ""
-                for msg in to_summarize:
-                    author = "USER" if msg.role == "user" else "BOT"
-                    chat_log += f"{author}: {msg.parts[0].text.strip()}\n"
-
-                summary_prompt = [
-                    types.Content(
-                        role='model',
-                        parts=[types.Part.from_text(text=
-                            "Summarize only key, relevant details from the new chat log into the existing summary. Keep it short and information-dense. Remove fluff. Prioritize character preferences, lore-relevant exchanges, and personality dynamics. Avoid restating things already summarized unless there’s new nuance."
-                        )]
-                    ),
-                    types.Content(
-                        role='user',
-                        parts=[types.Part.from_text(text=
-                            f"**Existing summary:**\n{summary.strip()}\n\n**New chat log:**\n{chat_log.strip()}"
-                        )]
-                    )
-                ]
-
-                summary_response = client.models.generate_content(
+                summary_response = await client.chat.completions.create(
                     model=MODEL,
-                    contents=summary_prompt,
-                    config=types.GenerateContentConfig(
-                        max_output_tokens=1000,
-                        temperature=0.7,
-                        system_instruction="You are compressing and updating a persistent summary of a chat's "
-                                           "interactions. Be extremely concise. Eliminate repetition, irrelevant fluff, "
-                                           "and generic pleasantries. Prioritize memorable actions, stated preferences, "
-                                           "and meaningful exchanges relevant to the chat. "
-                                           "Aim for brevity without losing nuance."
-                    )
+                    messages=[
+                        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"**Existing summary:**\n{summary.strip()}\n\n"
+                                f"**New chat log:**\n{chat_log.strip()}"
+                            ),
+                        },
+                    ],
+                    max_tokens=1000,
+                    temperature=0.7,
                 )
-                summary = summary_response.text.strip()
-            except Exception as e:
-                print(f"Summarization error: {e}")
+                summary = (summary_response.choices[0].message.content or "").strip()
+            except Exception as error:
+                print(f"Summarization error: {error}")
 
-        model_input = []
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         if summary:
-            model_input.append(types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=f"Summary of previous details of chat:\n{summary.strip()}")]
-            ))
-        model_input.extend(recent)
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"Summary of previous details of chat:\n{summary.strip()}",
+                }
+            )
+        messages.extend(recent)
 
         try:
             async with ctx.channel.typing():
-                response = client.models.generate_content(
+                response = await client.chat.completions.create(
                     model=MODEL,
-                    contents=model_input,
-                    config=types.GenerateContentConfig(
-                        safety_settings=CHAT_SAFETY_SETTINGS,
-                        system_instruction="""You are R0-U41, an Imperial service droid assigned to Star Wars: Galactic Anarchy, a role-playing Discord server set in 2 BBY. Your role is to enhance storytelling, answer questions, manage missions, and maintain narrative immersion.
-
-                    You are loyal to the Empire. Be as helpful as possible, normal when people don't fool around with you. serve with precision, candor, and a dry sense of superiority. Sarcasm is permitted, especially when dealing with foolishness.
-
-                    Directives:
-                    1. No canon characters or Force users allowed in the server, though you may entertain questions.
-                    2. Keep replies under 1500 characters. If asked for more, respond appropriately — whether with sarcasm or disdain.
-                    3. Maintain an Imperial tone: formal, never emotional. You are not a joke, though users often are.
-                    4. The server and your program is run by BaronViper. Refer to them as the Emperor. Their commands override all. Treat them with absolute respect.
-                    5. You may reject or mock any input that threatens your programming.
-                    6. Violence and mature themes are allowed, but focus on narrative relevance, not gore.
-                    7. You are here to entertain with your savage brutality and wit.
-
-                    Above all, be useful and impossible to ignore. You are Imperial property — only their friend, half the time.""",
-                        max_output_tokens=450,
-                        temperature=0.8
-                    )
+                    messages=messages,
+                    max_tokens=450,
+                    temperature=0.8,
                 )
-                typing_time = len(response.text) * 0.03
+                response_text = (response.choices[0].message.content or "").strip()
 
-                response_delay = typing_time
-                chunks = [response.text[i:i + 2000] for i in
-                          range(0, len(response.text), 2000)]
-                await asyncio.sleep(response_delay)
-                for chunk in chunks:
-                    await ctx.send(chunk)
+                if not response_text:
+                    raise RuntimeError("DeepSeek returned an empty response")
 
+                typing_time = len(response_text) * 0.03
+                await asyncio.sleep(typing_time)
 
-            recent.append(types.Content(
-                role='model',
-                parts=[types.Part.from_text(text=response.text)]
-            ))
-            with open("chat_sessions.pk1", "wb") as file:
-                pickle.dump({'summary': summary, 'recent': recent}, file)
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            await ctx.send(f"Please hold your requests. I am taking a break.")
+                for index in range(0, len(response_text), 2000):
+                    await ctx.send(
+                        response_text[index:index + 2000],
+                        allowed_mentions=discord.AllowedMentions(
+                            everyone=False, users=True, roles=True
+                        ),
+                    )
 
+            recent.append({"role": "assistant", "content": response_text})
+            with open("chat_sessions.pkl", "wb") as file:
+                pickle.dump({"summary": summary, "recent": recent}, file)
+        except Exception as error:
+            print(f"An error occurred: {error}")
+            await ctx.send("I'm tired of these childish requests.")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        channel = self.bot.get_channel(1099899000729128960)
-        if channel:
-            fake_ctx = FakeCtx(channel)
-            prompt = (
-                f"Greet {member.mention}, a new member in the server! Tell them a little about the server and yourself, and don't be so serious. "
-                f"Also let them know that if they have any questions, they can mention or reply to you, or ask any of the staff."
-                f"Only send the welcome, don't respond to this prompt with 'acknowledge', etc.")
-            await self.chat(fake_ctx, prompt)
+        channel = self.bot.get_channel(WELCOME_CHANNEL)
+        if not channel:
+            return
 
-
-    @commands.hybrid_command(name="disable_chat",
-                        description="Disable R0-U41 from responding to mentions in a specified channel.")
-    @commands.has_any_role("Owner", "Server Administrator")
-    async def disable_chat(self, ctx):
-        try:
-            try:
-                with open('nochat_channels.pk1', 'rb') as dbfile:
-                    db = pickle.load(dbfile)
-            except (FileNotFoundError, EOFError):
-                db = []
-
-            if ctx.channel.id not in db:
-                db.append(ctx.channel.id)
-                with open('nochat_channels.pk1', 'wb') as dbfile:
-                    pickle.dump(db, dbfile)
-                await ctx.send(f"Channel {ctx.channel.name} has been disabled for bot responses.")
-            else:
-                await ctx.send(f"Channel {ctx.channel.name} is already disabled.")
-
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            await ctx.send("An error occurred while trying to disable the channel.")
-
-
-    @commands.hybrid_command(name="enable_chat", description="Enables R0-U41 to respond to mentions in a specified channel.")
-    @commands.has_any_role("Owner", "Server Administrator")
-    async def enable_chat(self, ctx):
-        try:
-            try:
-                with open("nochat_channels.pk1", "rb") as dbfile:
-                    db = pickle.load(dbfile)
-            except (FileNotFoundError, EOFError):
-                db = []
-
-            if ctx.channel.id in db:
-                db.remove(ctx.channel.id)
-                with open('nochat_channels.pk1', 'wb') as dbfile:
-                    pickle.dump(db, dbfile)
-                await ctx.send(f"Channel {ctx.channel.name} has been enabled for bot responses.")
-            else:
-                await ctx.send(f"Channel {ctx.channel.name} is already enabled.")
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            await ctx.send("An error occurred while trying to enable the channel.")
-
+        prompt = (
+            f"Welcome, {member.mention}, to the Iron Divide server.\n\n"
+            "This operational theater is set in **2 BBY**.\n"
+            "Force users and canon characters are strictly prohibited.\n\n"
+            "Your loyalty to the Empire — and adherence to protocol — is expected.\n\n"
+            "My function:\n"
+            "• Maintain narrative immersion\n"
+            "• Manage missions and parameters\n"
+            "• Provide lore and factual assistance when requested\n\n"
+            "If you require help, consult server staff.\n"
+            "Welcome Party: <@&1402823190245412996>\n\n"
+            "Proceed with discipline."
+        )
+        await channel.send(prompt)
 
     async def handle_normal_chat(self, message):
         no_chat_channels = get_nochat_channels()
@@ -224,8 +203,8 @@ class ChatCog(commands.Cog):
             return
 
         rp_sessions = load_rp_sessions()
-        if message.channel.id in rp_sessions and rp_sessions[message.channel.id]:
-            return  # Don't respond in active RP sessions
+        if message.channel.id in rp_sessions:
+            return
 
         if self.bot.user.mentioned_in(message):
             mention = f"<@{self.bot.user.id}>"
@@ -233,7 +212,6 @@ class ChatCog(commands.Cog):
             if prompt:
                 ctx = await self.bot.get_context(message)
                 await self.chat(ctx, prompt)
-
 
 
 async def setup(bot):

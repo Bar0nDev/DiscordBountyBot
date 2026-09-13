@@ -1,10 +1,17 @@
 .env
 info.db
+chat_sessions.pkl
 chat_sessions.pk1
+nochat_channels.pkl
 nochat_channels.pk1
 rp_sessions.pk1
 discloud.config
 archive
+data/
+sessions/
+keys/
+.venv/
+venv/
 
 # Local IDE and Python runtime artifacts
 .idea/inspectionProfiles/Project_Default.xml

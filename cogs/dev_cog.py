@@ -1,5 +1,6 @@
 import asyncio
 import discord
+from discord import app_commands
 from discord.ext import commands
 import os
 
@@ -15,39 +16,122 @@ class DevCog(commands.Cog):
             # List of files to export
             files_to_export = [
                 ("info.db", "The database file does not exist."),
-                ("nochat_channels.pk1", "The no-chat channels file does not exist."),
-                ("chat_sessions.pk1", "The chat sessions file does not exist."),
-                ("rp_sessions.pk1", "The rp-sessions file does not exist.")
+                ("nochat_channels.pkl", "The no-chat channels file does not exist."),
+                ("chat_sessions.pkl", "The chat sessions file does not exist."),
+                ("data/news.pkl", "The news file does not exist.")
             ]
 
             files_to_send: list[discord.File] = []
-            for filename, error in files_to_export:
-                files_to_send.append(discord.File(filename))
+            missing_files = []
 
-            if ctx.interaction:
+            # Check which files exist and prepare them for sending
+            for file_path, error_message in files_to_export:
+                if os.path.exists(file_path):
+                    files_to_send.append(discord.File(file_path))
+                else:
+                    missing_files.append(error_message)
+
+            # Handle interaction response deferral
+            if ctx.interaction and not ctx.interaction.response.is_done():
                 await ctx.interaction.response.defer(ephemeral=True)
 
-            for file_path, error_message in files_to_export:
-                if not os.path.exists(file_path):
-                    if ctx.interaction:
-                        await ctx.followup.send(error_message, ephemeral=True)
-                    else:
-                        await ctx.send(error_message)
-                    continue
-
+            # Send existing files
+            if files_to_send:
                 if ctx.interaction:
-                    await ctx.send(files=files_to_send, ephemeral=True)
+                    if ctx.interaction.response.is_done():
+                        await ctx.interaction.followup.send(files=files_to_send, ephemeral=True)
+                    else:
+                        await ctx.interaction.response.send_message(files=files_to_send, ephemeral=True)
                 else:
                     file_msg = await ctx.send(files=files_to_send)
                     await asyncio.sleep(10)
                     await file_msg.delete()
 
+            # Report missing files
+            if missing_files:
+                missing_msg = "Some files were not found:\n" + "\n".join(missing_files)
+                if ctx.interaction:
+                    if ctx.interaction.response.is_done():
+                        await ctx.interaction.followup.send(missing_msg, ephemeral=True)
+                    else:
+                        await ctx.interaction.response.send_message(missing_msg, ephemeral=True)
+                else:
+                    await ctx.send(missing_msg)
+
         except Exception as e:
             print(f"Error in export command: {e}")
+            error_msg = "An error occurred while exporting the files."
             if ctx.interaction:
-                await ctx.followup.send("An error occurred while exporting the files.", ephemeral=True)
+                try:
+                    if ctx.interaction.response.is_done():
+                        await ctx.interaction.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.interaction.response.send_message(error_msg, ephemeral=True)
+                except:
+                    await ctx.send(error_msg, ephemeral=True)
             else:
-                await ctx.send("An error occurred while exporting the files.")
+                await ctx.send(error_msg)
+
+    @commands.hybrid_command(name="export_rp", description="Download a specific RP session file")
+    @app_commands.describe(channel_id="The channel ID of the RP session to export")
+    @commands.has_role("Owner")
+    async def export_rp(self, ctx, channel_id: str = None):
+        try:
+            if not channel_id:
+                await ctx.send("❌ Please provide a channel ID. Usage: `/export_rp channel_id:123456789`",
+                               ephemeral=True)
+                return
+
+            channel_id_clean = ''.join(filter(str.isdigit, channel_id))
+
+            if not channel_id_clean:
+                await ctx.send("❌ Invalid channel ID format.", ephemeral=True)
+                return
+
+            session_file = f"sessions/{channel_id_clean}.json"
+
+            # Handle interaction response deferral
+            if ctx.interaction and not ctx.interaction.response.is_done():
+                await ctx.interaction.response.defer(ephemeral=True)
+
+            if not os.path.exists(session_file):
+                error_msg = f"❌ No RP session file found for channel ID: {channel_id_clean}"
+                if ctx.interaction:
+                    if ctx.interaction.response.is_done():
+                        await ctx.interaction.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.interaction.response.send_message(error_msg, ephemeral=True)
+                else:
+                    await ctx.send(error_msg)
+                return
+
+            # Send the file
+            discord_file = discord.File(session_file, filename=f"rp_session_{channel_id_clean}.json")
+            success_msg = f"✅ RP session file for channel {channel_id_clean}:"
+
+            if ctx.interaction:
+                if ctx.interaction.response.is_done():
+                    await ctx.interaction.followup.send(success_msg, file=discord_file, ephemeral=True)
+                else:
+                    await ctx.interaction.response.send_message(success_msg, file=discord_file, ephemeral=True)
+            else:
+                file_msg = await ctx.send(success_msg, file=discord_file)
+                await asyncio.sleep(10)
+                await file_msg.delete()
+
+        except Exception as e:
+            print(f"Error in export_rp command: {e}")
+            error_msg = f"An error occurred while exporting the RP session: {str(e)}"
+            if ctx.interaction:
+                try:
+                    if ctx.interaction.response.is_done():
+                        await ctx.interaction.followup.send(error_msg, ephemeral=True)
+                    else:
+                        await ctx.interaction.response.send_message(error_msg, ephemeral=True)
+                except:
+                    await ctx.send(error_msg, ephemeral=True)
+            else:
+                await ctx.send(error_msg)
 
 
     @commands.hybrid_command(name='reload', description="Reload the bot's command tree")
@@ -65,3 +149,4 @@ class DevCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(DevCog(bot))
+
