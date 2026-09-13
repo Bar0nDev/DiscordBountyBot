@@ -5,5 +5,4 @@ openai==2.14.0
 apscheduler==3.11.0
 aiohttp==3.13.3
 pydantic==2.11.3
-unbelievaboat==2.1.2
 audioop-lts==0.2.1; python_version >= "3.13"
