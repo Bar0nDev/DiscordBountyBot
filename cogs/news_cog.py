@@ -1,10 +1,11 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import aiohttp
 from discord.ext import commands
 from discord import app_commands
 import os
 import pickle
 import asyncio
+import urllib.error
+import urllib.request
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from openai import AsyncOpenAI
@@ -24,6 +25,16 @@ client = AsyncOpenAI(
 MODEL = "deepseek-chat"
 
 from utils.utils import NEWS_URL
+
+
+def _post_webhook(request):
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            return response.status, body
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        return error.code, body
 
 class NewsReport(BaseModel):
     headline: str
@@ -340,14 +351,20 @@ class NewsCog(commands.Cog):
 
         # Send the news report
         URL = NEWS_URL
-        async with aiohttp.ClientSession() as session:
-            webhook_data = {
-                'embeds': [embed]
-            }
-            async with session.post(URL, json=webhook_data) as response:
-                if response.status != 204:
-                    print(f'Failed to send embed: {response.status}')
-                    print(f'Response body: {await response.text()}')
+        if URL:
+            webhook_data = {'embeds': [embed]}
+            request = urllib.request.Request(
+                URL,
+                data=json.dumps(webhook_data).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            response_status, response_body = await asyncio.to_thread(_post_webhook, request)
+            if response_status != 204:
+                print(f'Failed to send embed: {response_status}')
+                print(f'Response body: {response_body}')
+        else:
+            print("NEWS_URL is not configured; skipping webhook report")
 
         # Remove only processed entries from pickle
         remaining_data = []
@@ -371,4 +388,3 @@ class NewsCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(NewsCog(bot))
-

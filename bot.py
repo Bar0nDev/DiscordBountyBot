@@ -1,10 +1,31 @@
 import asyncio
 from discord.ext import commands
-import dotenv
 import os
 import discord
 
-dotenv.load_dotenv()
+
+
+def load_env_file(path=".env"):
+    """Load simple KEY=VALUE entries without requiring a runtime package."""
+    if not os.path.exists(path):
+        return
+
+    with open(path, encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+load_env_file()
 
 
 def run_discord_bot():
@@ -98,4 +119,3 @@ def run_discord_bot():
 
 
     asyncio.run(main())
-
