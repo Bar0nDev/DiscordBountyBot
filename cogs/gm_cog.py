@@ -1175,6 +1175,7 @@ class GMCog(commands.Cog):
     @app_commands.checks.has_any_role("Game Master", "Trial Gamemaster")
     async def gamemaster_edit(self, interaction: discord.Interaction, context: str):
         """Updated to use OpenAI message format with stronger instruction formatting and logging"""
+        await interaction.response.defer(ephemeral=True)
         channel_key = self.get_channel_key(interaction.channel)
 
         rp_session = load_session(channel_key)
@@ -1220,10 +1221,10 @@ class GMCog(commands.Cog):
             except Exception as log_error:
                 print(f"Failed to log GM edit: {log_error}")
 
-            await interaction.response.send_message("✅ Context updated successfully with strong emphasis.",
-                                                    ephemeral=True)
+            await interaction.followup.send("✅ Context updated successfully with strong emphasis.",
+                                            ephemeral=True)
         else:
-            await interaction.response.send_message("❌ The game master is not active for this channel.", ephemeral=True)
+            await interaction.followup.send("❌ The game master is not active for this channel.", ephemeral=True)
 
     @app_commands.command(name="gamemaster_retry",
                           description="Retry the latest gamemaster turn with optional corrective context")
@@ -1358,6 +1359,7 @@ class GMCog(commands.Cog):
     @app_commands.describe(channel="Hyperlink of #channel to move to", description="Description of the new location.")
     @app_commands.checks.has_any_role("Game Master", "Trial Gamemaster")
     async def gamemaster_location(self, interaction: discord.Interaction, channel: str, description: str):
+        await interaction.response.defer(ephemeral=True)
         current_channel_id = interaction.channel.id
 
         try:
@@ -1365,31 +1367,29 @@ class GMCog(commands.Cog):
             new_channel = await self.bot.fetch_channel(new_channel_id)
 
             if not new_channel:
-                await interaction.response.send_message("❌ Could not access the specified channel.", ephemeral=True)
+                await interaction.followup.send("❌ Could not access the specified channel.", ephemeral=True)
                 return
 
         except Exception as e:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Invalid channel was provided. Make sure it is the actual blue channel link. Example: <#1099899000729128960>",
                 ephemeral=True)
             return
 
         current_session = load_session(current_channel_id)
         if not current_session:
-            await interaction.response.send_message("❌ There is no active game master session in this channel/thread.",
-                                                    ephemeral=True)
+            await interaction.followup.send("❌ There is no active game master session in this channel/thread.",
+                                            ephemeral=True)
             return
 
         target_session = load_session(new_channel_id)
         if target_session:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ A game master session is in progress in that channel/thread. Please select a different one.",
                 ephemeral=True)
             return
 
         try:
-            await interaction.response.defer(ephemeral=True)
-
             current_session['scene_info']['location'] = description
 
             save_session(new_channel_id, current_session)

@@ -1,7 +1,9 @@
 import asyncio
+import traceback
 from discord.ext import commands
 import os
 import discord
+from discord import app_commands
 
 
 
@@ -71,6 +73,30 @@ def run_discord_bot():
             except:
                 await ctx.send("🚫 You do not have the required role.", delete_after=10)
 
+    @bot.tree.error
+    async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+        original_error = getattr(error, "original", error)
+
+        if isinstance(original_error, app_commands.MissingAnyRole):
+            message = "🚫 You do not have any of the required roles to use this command."
+        elif isinstance(original_error, app_commands.MissingRole):
+            message = "🚫 You do not have the required role to use this command."
+        else:
+            traceback.print_exception(
+                type(original_error),
+                original_error,
+                original_error.__traceback__
+            )
+            message = "❌ Something went wrong while processing that command. Please try again later."
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except Exception:
+            traceback.print_exc()
+
 
     @bot.hybrid_command(name="help", description="Shows R0-U41's help menu")
     async def help(ctx):
@@ -83,13 +109,17 @@ def run_discord_bot():
         embed.add_field(name="Show bounties",
                         value="Run /all_bounties (preferred) or >all_bounties to show available bounties.")
         embed.add_field(name="Add bounty",
-                        value="Run /add_bounty (preferred) or >add_bounty to add a new bounty. If running >add_mission, the command takes in three inputs separated by spaces (title, description, reward).\n\nExample Command: >add_bounty 'Jabba' 'I don't like him. I heard he's chilling in his palace on Tatooine.' '300'\n\n")
+                        value="`Moderator role required`\nRun /add_bounty to add a new bounty.\n\nExample Command: /add_bounty target:Jabba description:\"Wanted for desertion.\" reward:300 stars:3 client:Hutt\n\n")
         embed.add_field(name="Add mission",
-                        value="`Only available to @Game Master`\nRun /add_mission (preferred) or >add_mission to add a new mission. If running >add_mission, the command takes in five inputs separated by spaces (title, description, reward, difficulty- Very Easy, Easy, Medium, Hard, Very Hard, Expert, faction- Rogue, Imperial, Rebel, Mandalorian).\n\nExample Command: >add_mission 'Destroy Rebel Base' 'A big rebel base on Kuwait' '200' 'Easy' 'Imperial'\n\n")
+                        value="`Moderator role required`\nRun /add_mission (preferred) or >add_mission to add a new mission.\n\nExample Command: /add_mission title:\"Destroy Rebel Base\" description:\"A rebel base on Tatooine.\" reward:200 difficulty:Easy faction:Imperial\n\n")
+        embed.add_field(name="Edit/status missions",
+                        value="`Moderator role required`\nUse /edit_mission to update a mission and /mission_status to toggle its availability.\n\n")
         embed.add_field(name="Delete mission",
-                        value="`Only available to @Game Master`\nRun /delete_mission (preferred) or >delete_mission to delete a mission. If running >delete_mission, the command takes in two inputs (mission_id, faction- Rogue, Imperial, Rebel, Mandalorian).\n\nExample Command: >delete_mission 2 'Mandalorian'\n\n")
+                        value="`Moderator role required`\nRun /delete_mission to delete a mission.\n\nExample Command: /delete_mission m_id:2 faction:Mandalorian\n\n")
         embed.add_field(name="Delete bounty",
-                        value="`Only available to @Game Master`\nRun /delete_bounty (preferred) or >delete_bounty to delete a bounty. If running >delete_bounty, the command takes in one input (bounty_id).\n\nExample Command: >delete_bounty 2\n\n")
+                        value="`Moderator role required`\nRun /delete_bounty to delete a bounty.\n\nExample Command: /delete_bounty b_id:2\n\n")
+        embed.add_field(name="Generate mission/bounty boards",
+                        value="`Moderator role required`\nUse /generate_missions or /generate_bounties to fill the boards with AI-generated entries.\n\n")
         embed.set_footer(text="Built by BaronViper#8694")
         await ctx.send(embed=embed)
 
@@ -115,6 +145,9 @@ def run_discord_bot():
         for filename in os.listdir("./cogs"):
             if filename.endswith(".py") and filename != "__init__.py":
                 await bot.load_extension(f"cogs.{filename[:-3]}")
+        guild = discord.Object(id=ALLOWED_GUILD_ID)
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
         await bot.start(os.getenv('TOKEN'))
 
 
