@@ -127,6 +127,7 @@ jobs:
           REMOTE
 
       - name: Capture runtime startup output
+        if: always()
         env:
           SSH_OPTS: -i ${{ runner.temp }}/ssh/oracle_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${{ runner.temp }}/ssh/known_hosts
         run: |
