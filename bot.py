@@ -140,14 +140,19 @@ def run_discord_bot():
         await bot.process_commands(message)
 
 
-    async def main():
+    async def setup_hook():
         print("Loading Cogs...")
         for filename in os.listdir("./cogs"):
             if filename.endswith(".py") and filename != "__init__.py":
                 await bot.load_extension(f"cogs.{filename[:-3]}")
         guild = discord.Object(id=ALLOWED_GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
-        await bot.tree.sync(guild=guild)
+        synced_commands = await bot.tree.sync(guild=guild)
+        print(f"Synced {len(synced_commands)} application commands to guild {ALLOWED_GUILD_ID}")
+
+    bot.setup_hook = setup_hook
+
+    async def main():
         await bot.start(os.getenv('TOKEN'))
 
 
