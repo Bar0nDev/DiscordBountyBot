@@ -1,44 +1,26 @@
 import asyncio
+import json
+import traceback
 import discord
 from discord.ext import commands
 from db.models import Missions
 from discord import app_commands, Embed
 from db.sessions import Session
-from google import genai
-from google.genai import types
 import os
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy.exc import PendingRollbackError
 from sqlalchemy import asc
 from utils import moderator_check
 
 
-MODEL = "gemini-2.0-flash"
+MODEL = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 
-def get_gemini_client():
-    api_key = os.getenv("API_KEY") or os.getenv("GEMINI_API_KEY")
-    return genai.Client(api_key=api_key) if api_key else None
-
-
-MISSION_SAFETY_SETTINGS = [
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    )
-]
+def get_deepseek_client():
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    return AsyncOpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL) if api_key else None
 
 
 class MissionTemplate(BaseModel):
@@ -308,40 +290,48 @@ class MissionCog(commands.Cog):
         app_commands.Choice(name="Mandalorian", value="Mandalorian"),
     ])
     async def all_missions(self, ctx, faction: app_commands.Choice[str]):
-        await ctx.defer()
-        session = Session()
-        missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+        session = None
+        try:
+            await ctx.defer()
+            session = Session()
+            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
 
-        faction_colors = {
-            "Rogue": discord.Colour.from_rgb(220, 20, 60),
-            "Imperial": discord.Colour.from_rgb(0, 0, 0),
-            "Rebel": discord.Colour.from_rgb(255, 165, 0),
-            "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
-        }
-        embed_color = faction_colors.get(faction.value, discord.Colour.default())
+            faction_colors = {
+                "Rogue": discord.Colour.from_rgb(220, 20, 60),
+                "Imperial": discord.Colour.from_rgb(0, 0, 0),
+                "Rebel": discord.Colour.from_rgb(255, 165, 0),
+                "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
+            }
+            embed_color = faction_colors.get(faction.value, discord.Colour.default())
 
-        embed_description = ""
-        for idx, mission in enumerate(missions, start=1):
-            description_str = str(mission.description)
-            mission_description = (
-                description_str[:250] + "..."
-                if len(description_str) > 250
-                else description_str
+            embed_description = ""
+            for idx, mission in enumerate(missions, start=1):
+                description_str = str(mission.description)
+                mission_description = (
+                    description_str[:250] + "..."
+                    if len(description_str) > 250
+                    else description_str
+                )
+                embed_description += (
+                    f"**#{idx} — {mission.title}**\n"
+                    f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
+                    f"> 📌 Status: `{mission.availability}`\n"
+                    f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
+                    f"> 📝 {mission_description}\n\n"
+                )
+            embed = discord.Embed(
+                colour=embed_color,
+                title=f"📜 {faction.value} Mission Board",
+                description=embed_description
             )
-            embed_description += (
-                f"**#{idx} — {mission.title}**\n"
-                f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
-                f"> 📌 Status: `{mission.availability}`\n"
-                f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
-                f"> 📝 {mission_description}\n\n"
-            )
-        embed = discord.Embed(
-            colour=embed_color,
-            title=f"📜 {faction.value} Mission Board",
-            description=embed_description
-        )
-        await ctx.send(embed=embed)
-        session.close()
+            await ctx.send(embed=embed)
+        except Exception as exc:
+            print(f"[all_missions] {type(exc).__name__}: {exc}")
+            traceback.print_exc(limit=2)
+            await ctx.send("❌ Unable to load missions right now. Please try again later.", ephemeral=True)
+        finally:
+            if session is not None:
+                session.close()
 
 
     @commands.hybrid_command(name="mission_info", description="Show info for specified mission ID (1-10).")
@@ -465,10 +455,10 @@ class MissionCog(commands.Cog):
     ])
     async def generate_missions(self, interaction: discord.Interaction, faction: app_commands.Choice[str], amount: int = 10):
         await interaction.response.defer()
-        gemini_client = get_gemini_client()
-        if gemini_client is None:
+        deepseek_client = get_deepseek_client()
+        if deepseek_client is None:
             await interaction.followup.send(
-                "❌ AI mission generation is unavailable because no Gemini API key is configured.",
+                "❌ AI mission generation is unavailable because DEEPSEEK_API_KEY is not configured.",
                 ephemeral=True,
             )
             return
@@ -521,19 +511,22 @@ class MissionCog(commands.Cog):
                 f"\nOnly name specific planets if the planet is significant to the mission. Otherwise, use general locations like: Outer Rim, Inner Rim, Mid Rim, Deep Core, Unknown Regions, Galactic Core, Expansion Region, or Colony Region.\n"
             )
 
-            response = gemini_client.models.generate_content(
+            response = await deepseek_client.chat.completions.create(
                 model=MODEL,
-                contents=["Generate Star Wars themed missions"],
-                config=types.GenerateContentConfig(
-                    safety_settings=MISSION_SAFETY_SETTINGS,
-                    system_instruction=prompt,
-                    response_mime_type="application/json",
-                    temperature=0.8,
-                    response_schema=list[MissionTemplate]
-                )
+                messages=[
+                    {"role": "system", "content": prompt + "\nReturn a JSON object with a `missions` array."},
+                    {"role": "user", "content": "Generate Star Wars themed missions."},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.8,
             )
 
-            missions_generated: list[MissionTemplate] = response.parsed
+            response_data = json.loads(response.choices[0].message.content)
+            missions_payload = response_data.get("missions", response_data)
+            missions_generated: list[MissionTemplate] = [
+                MissionTemplate.model_validate(mission)
+                for mission in missions_payload
+            ]
             for mission in missions_generated[:num_to_create]:
                 new_mission = Missions(
                     title=mission.title,

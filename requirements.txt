@@ -1,5 +1,4 @@
 discord.py==2.5.2
-google-genai==1.12.1
 SQLAlchemy==2.0.40
 openai==2.14.0
 apscheduler==3.11.0

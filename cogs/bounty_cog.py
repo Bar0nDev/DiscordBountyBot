@@ -1,43 +1,25 @@
 import asyncio
+import json
+import traceback
 import discord
 from discord.ext import commands
 from db.models import Bounties
 from discord import app_commands, Embed
 from db.sessions import Session
-from google import genai
-from google.genai import types
 import os
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy import asc
 from utils import moderator_check
 
 
-MODEL = "gemini-2.0-flash"
+MODEL = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 
-def get_gemini_client():
-    api_key = os.getenv("API_KEY") or os.getenv("GEMINI_API_KEY")
-    return genai.Client(api_key=api_key) if api_key else None
-
-
-BOUNTY_SAFETY_SETTINGS = [
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    ),
-    types.SafetySetting(
-        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold=types.HarmBlockThreshold.BLOCK_NONE,
-    )
-]
+def get_deepseek_client():
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    return AsyncOpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL) if api_key else None
 
 
 class BountyTemplate(BaseModel):
@@ -140,35 +122,43 @@ class BountyCog(commands.Cog):
 
     @commands.hybrid_command(name="all_bounties", description="Shows all available bounties.")
     async def all_bounties(self, ctx):
-        await ctx.defer()
-        session = Session()
-        bounties = session.query(Bounties).order_by(asc(Bounties.reward)).all()
-        embed_description = ""
-        for i, bounty in enumerate(bounties, start=1):
-            star_display = "★" * (6 - bounty.stars) + "☆" * (bounty.stars - 1)
+        session = None
+        try:
+            await ctx.defer()
+            session = Session()
+            bounties = session.query(Bounties).order_by(asc(Bounties.reward)).all()
+            embed_description = ""
+            for i, bounty in enumerate(bounties, start=1):
+                star_display = "★" * (6 - bounty.stars) + "☆" * (bounty.stars - 1)
 
-            description_str = str(bounty.description)
-            bounty_description = (
-                description_str[:250] + "..."
-                if len(description_str) > 250
-                else description_str
+                description_str = str(bounty.description)
+                bounty_description = (
+                    description_str[:250] + "..."
+                    if len(description_str) > 250
+                    else description_str
+                )
+
+                embed_description += (
+                    f"**#{i} — `{bounty.target}`**\n"
+                    f"> 🚨 Priority: {star_display}\n"
+                    f"> 👤 Client: `{bounty.client}`\n"
+                    f"> 💰 Reward: <:credits:1099938341467738122> **{bounty.reward:,}**\n"
+                    f"> 📝 {bounty_description}\n\n"
+                )
+
+            embed = discord.Embed(
+                colour=discord.Colour.from_rgb(0, 0, 0),
+                title="📜 Bounty Board",
+                description=embed_description
             )
-
-            embed_description += (
-                f"**#{i} — `{bounty.target}`**\n"
-                f"> 🚨 Priority: {star_display}\n"
-                f"> 👤 Client: `{bounty.client}`\n"
-                f"> 💰 Reward: <:credits:1099938341467738122> **{bounty.reward:,}**\n"
-                f"> 📝 {bounty_description}\n\n"
-            )
-
-        embed = discord.Embed(
-            colour=discord.Colour.from_rgb(0, 0, 0),
-            title="📜 Bounty Board",
-            description=embed_description
-        )
-        await ctx.send(embed=embed)
-        session.close()
+            await ctx.send(embed=embed)
+        except Exception as exc:
+            print(f"[all_bounties] {type(exc).__name__}: {exc}")
+            traceback.print_exc(limit=2)
+            await ctx.send("❌ Unable to load bounties right now. Please try again later.", ephemeral=True)
+        finally:
+            if session is not None:
+                session.close()
 
 
     @commands.hybrid_command(name="delete_bounty", description="Delete bounty by specified bounty ID (1-10).")
@@ -222,10 +212,10 @@ class BountyCog(commands.Cog):
     @app_commands.describe(amount="Number of bounties to generate (default: Fills up bounty board to 10 total bounties)")
     async def generate_bounties(self, interaction: discord.Interaction, amount: int = 10):
         await interaction.response.defer()
-        gemini_client = get_gemini_client()
-        if gemini_client is None:
+        deepseek_client = get_deepseek_client()
+        if deepseek_client is None:
             await interaction.followup.send(
-                "❌ AI bounty generation is unavailable because no Gemini API key is configured.",
+                "❌ AI bounty generation is unavailable because DEEPSEEK_API_KEY is not configured.",
                 ephemeral=True,
             )
             return
@@ -252,19 +242,22 @@ class BountyCog(commands.Cog):
                 f"Use an appropriately gritty, criminal tone — think dark holonet terminal postings. Be terse but evocative. Only use specific planetary names if essential; otherwise refer to regions like 'Outer Rim', 'Mid Rim', 'Expansion Region', etc. Avoid exposition or polite phrasing — this is underworld business."
             )
 
-            response = gemini_client.models.generate_content(
+            response = await deepseek_client.chat.completions.create(
                 model=MODEL,
-                contents=["Generate Star Wars themed bounties"],
-                config=types.GenerateContentConfig(
-                    safety_settings=BOUNTY_SAFETY_SETTINGS,
-                    system_instruction=prompt,
-                    response_mime_type="application/json",
-                    temperature=0.8,
-                    response_schema=list[BountyTemplate]
-                )
+                messages=[
+                    {"role": "system", "content": prompt + "\nReturn a JSON object with a `bounties` array."},
+                    {"role": "user", "content": "Generate Star Wars themed bounties."},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.8,
             )
 
-            bounties_generated: list[BountyTemplate] = response.parsed
+            response_data = json.loads(response.choices[0].message.content)
+            bounties_payload = response_data.get("bounties", response_data)
+            bounties_generated: list[BountyTemplate] = [
+                BountyTemplate.model_validate(bounty)
+                for bounty in bounties_payload
+            ]
             for bounty in bounties_generated[:num_to_create]:
                 new_bounty = Bounties(
                     target=f"{bounty.target} [NPC]",
