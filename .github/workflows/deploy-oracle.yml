@@ -125,3 +125,17 @@ jobs:
           echo 'R0-U41 process was not found after restart.' >&2
           exit 1
           REMOTE
+
+      - name: Capture runtime startup output
+        env:
+          SSH_OPTS: -i ${{ runner.temp }}/ssh/oracle_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${{ runner.temp }}/ssh/known_hosts
+        run: |
+          set -euo pipefail
+          ssh $SSH_OPTS opc@129.146.36.195 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          sleep 5
+          echo '--- R0-U41 tmux output ---'
+          tmux capture-pane -p -t R0U41:0 -S -160 || true
+          echo '--- R0-U41 process check ---'
+          pgrep -af '[p]ython main.py' || true
+          REMOTE
