@@ -13,8 +13,12 @@ from sqlalchemy import asc
 from utils import moderator_check
 
 
-client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
+
+
+def get_gemini_client():
+    api_key = os.getenv("API_KEY") or os.getenv("GEMINI_API_KEY")
+    return genai.Client(api_key=api_key) if api_key else None
 
 
 MISSION_SAFETY_SETTINGS = [
@@ -461,6 +465,14 @@ class MissionCog(commands.Cog):
     ])
     async def generate_missions(self, interaction: discord.Interaction, faction: app_commands.Choice[str], amount: int = 10):
         await interaction.response.defer()
+        gemini_client = get_gemini_client()
+        if gemini_client is None:
+            await interaction.followup.send(
+                "❌ AI mission generation is unavailable because no Gemini API key is configured.",
+                ephemeral=True,
+            )
+            return
+
         session = Session()
         missions = session.query(Missions).filter_by(faction=faction.value).all()
         mission_count = len(missions)
@@ -509,7 +521,7 @@ class MissionCog(commands.Cog):
                 f"\nOnly name specific planets if the planet is significant to the mission. Otherwise, use general locations like: Outer Rim, Inner Rim, Mid Rim, Deep Core, Unknown Regions, Galactic Core, Expansion Region, or Colony Region.\n"
             )
 
-            response = client.models.generate_content(
+            response = gemini_client.models.generate_content(
                 model=MODEL,
                 contents=["Generate Star Wars themed missions"],
                 config=types.GenerateContentConfig(
@@ -553,4 +565,3 @@ class MissionCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(MissionCog(bot))
-

@@ -12,8 +12,12 @@ from sqlalchemy import asc
 from utils import moderator_check
 
 
-client = genai.Client(api_key=os.getenv("API_KEY"))
 MODEL = "gemini-2.0-flash"
+
+
+def get_gemini_client():
+    api_key = os.getenv("API_KEY") or os.getenv("GEMINI_API_KEY")
+    return genai.Client(api_key=api_key) if api_key else None
 
 
 BOUNTY_SAFETY_SETTINGS = [
@@ -218,6 +222,14 @@ class BountyCog(commands.Cog):
     @app_commands.describe(amount="Number of bounties to generate (default: Fills up bounty board to 10 total bounties)")
     async def generate_bounties(self, interaction: discord.Interaction, amount: int = 10):
         await interaction.response.defer()
+        gemini_client = get_gemini_client()
+        if gemini_client is None:
+            await interaction.followup.send(
+                "❌ AI bounty generation is unavailable because no Gemini API key is configured.",
+                ephemeral=True,
+            )
+            return
+
         session = Session()
         bounties = session.query(Bounties).all()
         bounty_count = len(bounties)
@@ -240,7 +252,7 @@ class BountyCog(commands.Cog):
                 f"Use an appropriately gritty, criminal tone — think dark holonet terminal postings. Be terse but evocative. Only use specific planetary names if essential; otherwise refer to regions like 'Outer Rim', 'Mid Rim', 'Expansion Region', etc. Avoid exposition or polite phrasing — this is underworld business."
             )
 
-            response = client.models.generate_content(
+            response = gemini_client.models.generate_content(
                 model=MODEL,
                 contents=["Generate Star Wars themed bounties"],
                 config=types.GenerateContentConfig(
@@ -283,4 +295,3 @@ class BountyCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(BountyCog(bot))
-
