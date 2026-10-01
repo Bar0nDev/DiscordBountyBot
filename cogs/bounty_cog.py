@@ -127,7 +127,7 @@ class BountyCog(commands.Cog):
             await ctx.defer()
             session = Session()
             bounties = session.query(Bounties).order_by(asc(Bounties.reward)).all()
-            embed_description = ""
+            listing_entries = []
             for i, bounty in enumerate(bounties, start=1):
                 star_display = "★" * (6 - bounty.stars) + "☆" * (bounty.stars - 1)
 
@@ -138,7 +138,7 @@ class BountyCog(commands.Cog):
                     else description_str
                 )
 
-                embed_description += (
+                listing_entries.append(
                     f"**#{i} — `{bounty.target}`**\n"
                     f"> 🚨 Priority: {star_display}\n"
                     f"> 👤 Client: `{bounty.client}`\n"
@@ -146,12 +146,32 @@ class BountyCog(commands.Cog):
                     f"> 📝 {bounty_description}\n\n"
                 )
 
-            embed = discord.Embed(
-                colour=discord.Colour.from_rgb(0, 0, 0),
-                title="📜 Bounty Board",
-                description=embed_description
-            )
-            await ctx.send(embed=embed)
+            description_limit = 4095
+            pages = []
+            current_page = ""
+            for entry in listing_entries:
+                while len(entry) > description_limit:
+                    if current_page:
+                        pages.append(current_page)
+                        current_page = ""
+                    pages.append(entry[:description_limit])
+                    entry = entry[description_limit:]
+                if current_page and len(current_page) + len(entry) > description_limit:
+                    pages.append(current_page)
+                    current_page = ""
+                current_page += entry
+            if current_page:
+                pages.append(current_page)
+            if not pages:
+                pages.append("No bounties are currently listed on the board.")
+
+            for page in pages:
+                embed = discord.Embed(
+                    colour=discord.Colour.from_rgb(0, 0, 0),
+                    title="📜 Bounty Board",
+                    description=page
+                )
+                await ctx.send(embed=embed)
         except Exception as exc:
             print(f"[all_bounties] {type(exc).__name__}: {exc}")
             traceback.print_exc(limit=2)

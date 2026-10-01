@@ -304,7 +304,7 @@ class MissionCog(commands.Cog):
             }
             embed_color = faction_colors.get(faction.value, discord.Colour.default())
 
-            embed_description = ""
+            listing_entries = []
             for idx, mission in enumerate(missions, start=1):
                 description_str = str(mission.description)
                 mission_description = (
@@ -312,19 +312,40 @@ class MissionCog(commands.Cog):
                     if len(description_str) > 250
                     else description_str
                 )
-                embed_description += (
+                listing_entries.append(
                     f"**#{idx} — {mission.title}**\n"
                     f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
                     f"> 📌 Status: `{mission.availability}`\n"
                     f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
                     f"> 📝 {mission_description}\n\n"
                 )
-            embed = discord.Embed(
-                colour=embed_color,
-                title=f"📜 {faction.value} Mission Board",
-                description=embed_description
-            )
-            await ctx.send(embed=embed)
+
+            description_limit = 4095
+            pages = []
+            current_page = ""
+            for entry in listing_entries:
+                while len(entry) > description_limit:
+                    if current_page:
+                        pages.append(current_page)
+                        current_page = ""
+                    pages.append(entry[:description_limit])
+                    entry = entry[description_limit:]
+                if current_page and len(current_page) + len(entry) > description_limit:
+                    pages.append(current_page)
+                    current_page = ""
+                current_page += entry
+            if current_page:
+                pages.append(current_page)
+            if not pages:
+                pages.append(f"No missions are currently listed for the {faction.value} faction.")
+
+            for page in pages:
+                embed = discord.Embed(
+                    colour=embed_color,
+                    title=f"📜 {faction.value} Mission Board",
+                    description=page
+                )
+                await ctx.send(embed=embed)
         except Exception as exc:
             print(f"[all_missions] {type(exc).__name__}: {exc}")
             traceback.print_exc(limit=2)
