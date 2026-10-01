@@ -30,6 +30,53 @@ class MissionTemplate(BaseModel):
     difficulty: str
 
 
+class MissionPaginationView(discord.ui.View):
+    def __init__(self, pages, embed_color, faction):
+        super().__init__(timeout=300)
+        self.pages = pages
+        self.embed_color = embed_color
+        self.faction = faction
+        self.current_page = 0
+        self.message = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= len(self.pages) - 1
+
+    def create_embed(self):
+        embed = discord.Embed(
+            colour=self.embed_color,
+            title=f"📜 {self.faction} Mission Board",
+            description=self.pages[self.current_page]
+        )
+        embed.set_footer(text=f"Page {self.current_page + 1} of {len(self.pages)}")
+        return embed
+
+    async def on_timeout(self):
+        self.previous_button.disabled = True
+        self.next_button.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+    @discord.ui.button(label='◀ Previous', style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.create_embed(), view=self)
+
+    @discord.ui.button(label='Next ▶', style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < len(self.pages) - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.create_embed(), view=self)
+
+
 class MissionCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -341,13 +388,8 @@ class MissionCog(commands.Cog):
             if not pages:
                 pages.append(f"No missions are currently listed for the {faction.value} faction.")
 
-            for page in pages:
-                embed = discord.Embed(
-                    colour=embed_color,
-                    title=f"📜 {faction.value} Mission Board",
-                    description=page
-                )
-                await ctx.send(embed=embed)
+            view = MissionPaginationView(pages, embed_color, faction.value)
+            view.message = await ctx.send(embed=view.create_embed(), view=view)
         except Exception as exc:
             print(f"[all_missions] {type(exc).__name__}: {exc}")
             traceback.print_exc(limit=2)

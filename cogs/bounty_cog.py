@@ -30,6 +30,51 @@ class BountyTemplate(BaseModel):
     stars: int
 
 
+class BountyPaginationView(discord.ui.View):
+    def __init__(self, pages):
+        super().__init__(timeout=300)
+        self.pages = pages
+        self.current_page = 0
+        self.message = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= len(self.pages) - 1
+
+    def create_embed(self):
+        embed = discord.Embed(
+            colour=discord.Colour.from_rgb(0, 0, 0),
+            title="📜 Bounty Board",
+            description=self.pages[self.current_page]
+        )
+        embed.set_footer(text=f"Page {self.current_page + 1} of {len(self.pages)}")
+        return embed
+
+    async def on_timeout(self):
+        self.previous_button.disabled = True
+        self.next_button.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+    @discord.ui.button(label='◀ Previous', style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.create_embed(), view=self)
+
+    @discord.ui.button(label='Next ▶', style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < len(self.pages) - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.create_embed(), view=self)
+
+
 class BountyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -167,13 +212,8 @@ class BountyCog(commands.Cog):
             if not pages:
                 pages.append("No bounties are currently listed on the board.")
 
-            for page in pages:
-                embed = discord.Embed(
-                    colour=discord.Colour.from_rgb(0, 0, 0),
-                    title="📜 Bounty Board",
-                    description=page
-                )
-                await ctx.send(embed=embed)
+            view = BountyPaginationView(pages)
+            view.message = await ctx.send(embed=view.create_embed(), view=view)
         except Exception as exc:
             print(f"[all_bounties] {type(exc).__name__}: {exc}")
             traceback.print_exc(limit=2)
