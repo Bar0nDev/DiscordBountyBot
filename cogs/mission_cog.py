@@ -320,7 +320,9 @@ class MissionCog(commands.Cog):
                     f"> 📝 {mission_description}\n\n"
                 )
 
-            description_limit = 4095
+            # Discord validates this field by UTF-16 length; leave headroom for
+            # emoji and other non-BMP characters in the rendered board.
+            description_limit = 3800
             pages = []
             current_page = ""
             for entry in listing_entries:
