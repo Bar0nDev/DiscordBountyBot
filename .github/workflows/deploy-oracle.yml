@@ -72,23 +72,48 @@ jobs:
           cd "$app"
           python -m pip install --user --disable-pip-version-check -r requirements.txt
 
+          app_pids() {
+            for pid in $(pgrep -f '[p]ython main.py' || true); do
+              if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$app" ]; then
+                printf '%s\n' "$pid"
+              fi
+            done
+          }
+
           if tmux has-session -t "$session" 2>/dev/null; then
             tmux send-keys -t "$target" C-c
+          fi
+
+          pids=$(app_pids)
+          if [ -n "$pids" ]; then
+            echo "Stopping existing R0-U41 app processes: $pids"
+            for pid in $pids; do
+              kill -TERM "$pid" 2>/dev/null || true
+            done
             for _ in $(seq 1 15); do
-              running=false
-              for pid in $(pgrep -f '[p]ython main.py' || true); do
-                if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$app" ]; then
-                  running=true
-                  break
-                fi
-              done
-              [ "$running" = false ] && break
+              [ -z "$(app_pids)" ] && break
               sleep 1
             done
-            if [ "$running" = true ]; then
-              echo 'R0-U41 did not stop after Ctrl-C.' >&2
-              exit 1
-            fi
+          fi
+
+          pids=$(app_pids)
+          if [ -n "$pids" ]; then
+            echo "Force-stopping remaining R0-U41 app processes: $pids" >&2
+            for pid in $pids; do
+              kill -KILL "$pid" 2>/dev/null || true
+            done
+            for _ in $(seq 1 5); do
+              [ -z "$(app_pids)" ] && break
+              sleep 1
+            done
+          fi
+
+          if [ -n "$(app_pids)" ]; then
+            echo 'R0-U41 app processes remained after graceful and force stop.' >&2
+            exit 1
+          fi
+
+          if tmux has-session -t "$session" 2>/dev/null; then
             tmux send-keys -t "$target" "cd $app && python main.py" C-m
           else
             tmux new-session -d -s "$session" -c "$app" "python main.py"
@@ -104,25 +129,30 @@ jobs:
           set -euo pipefail
           app=/home/opc/bots/R0U41
           tmux has-session -t R0U41
-          seen=0
-          for _ in $(seq 1 15); do
-            found=false
+
+          app_pids() {
             for pid in $(pgrep -f '[p]ython main.py' || true); do
               if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$app" ]; then
-                found=true
-                echo "R0-U41 running with pid $pid"
-                break
+                printf '%s\n' "$pid"
               fi
             done
-            if [ "$found" = true ]; then
+          }
+
+          seen=0
+          for _ in $(seq 1 15); do
+            pids=$(app_pids)
+            count=$(printf '%s\n' "$pids" | awk 'NF { count++ } END { print count + 0 }')
+            if [ "$count" -eq 1 ]; then
+              echo "R0-U41 running with pid $pids"
               seen=$((seen + 1))
               [ "$seen" -ge 3 ] && exit 0
             else
+              [ "$count" -gt 1 ] && echo "R0-U41 has $count app-scoped python main.py processes: $pids" >&2
               seen=0
             fi
             sleep 1
           done
-          echo 'R0-U41 process was not found after restart.' >&2
+          echo 'R0-U41 did not have exactly one app-scoped python main.py process after restart.' >&2
           exit 1
           REMOTE
 

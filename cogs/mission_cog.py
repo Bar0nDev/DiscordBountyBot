@@ -1,6 +1,7 @@
 import asyncio
 import json
 import traceback
+import unicodedata
 import discord
 from discord.ext import commands
 from db.models import Missions
@@ -9,13 +10,114 @@ from db.sessions import Session
 import os
 from openai import AsyncOpenAI
 from pydantic import BaseModel
-from sqlalchemy.exc import PendingRollbackError
+from sqlalchemy.exc import PendingRollbackError, SQLAlchemyError
 from sqlalchemy import asc
 from utils import moderator_check
+from utils.utils import FACTION_CHOICES as SHARED_FACTION_CHOICES, FACTION_COLORS
 
 
 MODEL = "deepseek-chat"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+MISSION_EMBED_DESCRIPTION_LIMIT = 3800
+
+
+def faction_choices(include_universal=False):
+    choices = [
+        app_commands.Choice(name=choice.name, value=choice.value)
+        for choice in SHARED_FACTION_CHOICES
+    ]
+    if include_universal:
+        choices.append(app_commands.Choice(name="Universal", value="Universal"))
+    return choices
+
+
+def _utf16_length(value):
+    return len(value.encode("utf-16-le", errors="replace")) // 2
+
+
+def _truncate_utf16(value, limit=MISSION_EMBED_DESCRIPTION_LIMIT):
+    value = str(value)
+    if _utf16_length(value) <= limit:
+        return value
+
+    suffix = "…"
+    remaining = max(0, limit - _utf16_length(suffix))
+    truncated = []
+    used_units = 0
+    for character in value:
+        character_units = _utf16_length(character)
+        if used_units + character_units > remaining:
+            break
+        truncated.append(character)
+        used_units += character_units
+    return "".join(truncated) + suffix
+
+
+def _split_utf16(value, limit=MISSION_EMBED_DESCRIPTION_LIMIT):
+    chunks = []
+    current = []
+    used_units = 0
+    for character in str(value):
+        character_units = _utf16_length(character)
+        if current and used_units + character_units > limit:
+            chunks.append("".join(current))
+            current = []
+            used_units = 0
+        current.append(character)
+        used_units += character_units
+    if current:
+        chunks.append("".join(current))
+    return chunks or [""]
+
+
+def _sanitize_embed_text(value):
+    text = "" if value is None else str(value)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = "".join(
+        character
+        for character in text
+        if character in "\n\t" or unicodedata.category(character) not in {"Cc", "Cs"}
+    )
+    return discord.utils.escape_mentions(text)
+
+
+def _mission_embed_description(mission):
+    description = (
+        f"**🎯 {_sanitize_embed_text(mission.title)}**\n"
+        f"> ⚙️ Difficulty: `{_sanitize_embed_text(mission.difficulty)}`\n"
+        f"> 📌 Status: `{_sanitize_embed_text(mission.availability)}`\n"
+        f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
+        f"> 📝 Description:\n{_sanitize_embed_text(mission.description)}"
+    )
+    return _truncate_utf16(description)
+
+
+async def _defer_mission_context(ctx):
+    if getattr(ctx, "interaction", None) is None:
+        return
+    try:
+        await ctx.defer()
+    except Exception as exc:
+        print(f"[mission command defer] {type(exc).__name__}: {exc}")
+
+
+async def _safe_mission_send(ctx, content=None, *, embed=None):
+    try:
+        if content is None:
+            return await ctx.send(embed=embed)
+        if embed is None:
+            return await ctx.send(content)
+        return await ctx.send(content, embed=embed)
+    except Exception as exc:
+        print(f"[mission command send] {type(exc).__name__}: {exc}")
+        return None
+
+
+def _safe_mission_rollback(session):
+    try:
+        session.rollback()
+    except Exception as exc:
+        print(f"[mission command rollback] {type(exc).__name__}: {exc}")
 
 
 def get_deepseek_client():
@@ -95,23 +197,12 @@ class MissionCog(commands.Cog):
         app_commands.Choice(name="Extreme", value="Extreme"),
         app_commands.Choice(name="Impossible", value="Impossible"),
     ])
-    @app_commands.choices(faction=[
-        app_commands.Choice(name="Rogue", value="Rogue"),
-        app_commands.Choice(name="Imperial", value="Imperial"),
-        app_commands.Choice(name="Rebel", value="Rebel"),
-        app_commands.Choice(name="Mandalorian", value="Mandalorian"),
-    ])
+    @app_commands.choices(faction=faction_choices())
     async def add_mission(self, ctx, title: str, description: str, reward: int, difficulty: app_commands.Choice[str],
                           faction: app_commands.Choice[str]):
         session = Session()
 
-        faction_colors = {
-            "Rogue": discord.Colour.from_rgb(220, 20, 60),
-            "Imperial": discord.Colour.from_rgb(0, 0, 0),
-            "Rebel": discord.Colour.from_rgb(255, 165, 0),
-            "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
-        }
-        embed_color = faction_colors.get(faction.value, discord.Colour.default())
+        embed_color = FACTION_COLORS.get(faction.value, discord.Colour.default())
 
         formatted_title = ' '.join(word.capitalize() for word in title.split())
         embed = discord.Embed(
@@ -167,14 +258,7 @@ class MissionCog(commands.Cog):
     @app_commands.describe(faction='What faction is this mission for?',
                            m_id="What is the mission's ID?"
                            )
-    @app_commands.choices(
-        faction=[
-            app_commands.Choice(name="Rogue", value="Rogue"),
-            app_commands.Choice(name="Imperial", value="Imperial"),
-            app_commands.Choice(name="Rebel", value="Rebel"),
-            app_commands.Choice(name="Mandalorian", value="Mandalorian"),
-        ]
-    )
+    @app_commands.choices(faction=faction_choices())
     async def mission_status(self, ctx, m_id: int, faction: app_commands.Choice[str]):
         session = Session()
 
@@ -201,13 +285,7 @@ class MissionCog(commands.Cog):
         except PendingRollbackError:
             session.rollback()
 
-        faction_colors = {
-            "Rogue": discord.Colour.from_str("#dc143c"),
-            "Imperial": discord.Colour.from_rgb(0, 0, 0),
-            "Rebel": discord.Colour.from_str("#ffa500"),
-            "Mandalorian": discord.Colour.from_str("#9500ff")
-        }
-        embed_color = faction_colors.get(faction.value, discord.Colour.default())
+        embed_color = FACTION_COLORS.get(faction.value, discord.Colour.default())
 
         embed = discord.Embed(
             colour=embed_color,
@@ -230,12 +308,7 @@ class MissionCog(commands.Cog):
                            m_id="What is the mission's ID?",
                            mission_field='What mission info to edit?',
                            mission_value="What value to replace mission info?")
-    @app_commands.choices(faction=[
-        app_commands.Choice(name="Rogue", value="Rogue"),
-        app_commands.Choice(name="Imperial", value="Imperial"),
-        app_commands.Choice(name="Rebel", value="Rebel"),
-        app_commands.Choice(name="Mandalorian", value="Mandalorian"),
-    ])
+    @app_commands.choices(faction=faction_choices())
     @app_commands.choices(mission_field=[
         app_commands.Choice(name="Title", value="Title"),
         app_commands.Choice(name="Description", value="Description"),
@@ -288,13 +361,7 @@ class MissionCog(commands.Cog):
                 return
 
         # Faction-based color
-        faction_colors = {
-            "Rogue": discord.Colour.from_str("#dc143c"),
-            "Imperial": discord.Colour.from_rgb(0, 0, 0),
-            "Rebel": discord.Colour.from_str("#ffa500"),
-            "Mandalorian": discord.Colour.from_str("#9500ff")
-        }
-        embed_color = faction_colors.get(faction.value, discord.Colour.default())
+        embed_color = FACTION_COLORS.get(faction.value, discord.Colour.default())
 
         embed = discord.Embed(
             colour=embed_color,
@@ -330,26 +397,19 @@ class MissionCog(commands.Cog):
 
     @commands.hybrid_command(name="all_missions", description="Shows all available missions for each faction.")
     @app_commands.describe(faction='What faction missions to show?')
-    @app_commands.choices(faction=[
-        app_commands.Choice(name="Rogue", value="Rogue"),
-        app_commands.Choice(name="Imperial", value="Imperial"),
-        app_commands.Choice(name="Rebel", value="Rebel"),
-        app_commands.Choice(name="Mandalorian", value="Mandalorian"),
-    ])
+    @app_commands.choices(faction=faction_choices(include_universal=True))
     async def all_missions(self, ctx, faction: app_commands.Choice[str]):
         session = None
         try:
-            await ctx.defer()
+            await _defer_mission_context(ctx)
             session = Session()
-            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+            mission_query = session.query(Missions)
+            if faction.value != "Universal":
+                mission_query = mission_query.filter_by(faction=faction.value)
+            missions = mission_query.order_by(asc(Missions.reward)).all()
 
-            faction_colors = {
-                "Rogue": discord.Colour.from_rgb(220, 20, 60),
-                "Imperial": discord.Colour.from_rgb(0, 0, 0),
-                "Rebel": discord.Colour.from_rgb(255, 165, 0),
-                "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
-            }
-            embed_color = faction_colors.get(faction.value, discord.Colour.default())
+            embed_color = FACTION_COLORS.get(faction.value, discord.Colour.from_rgb(0, 0, 0))
+            board_faction = faction.value
 
             listing_entries = []
             for idx, mission in enumerate(missions, start=1):
@@ -359,8 +419,9 @@ class MissionCog(commands.Cog):
                     if len(description_str) > 250
                     else description_str
                 )
+                faction_label = f" — `{mission.faction}`" if faction.value == "Universal" else ""
                 listing_entries.append(
-                    f"**#{idx} — {mission.title}**\n"
+                    f"**#{idx} — {mission.title}{faction_label}**\n"
                     f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
                     f"> 📌 Status: `{mission.availability}`\n"
                     f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
@@ -373,27 +434,25 @@ class MissionCog(commands.Cog):
             pages = []
             current_page = ""
             for entry in listing_entries:
-                while len(entry) > description_limit:
-                    if current_page:
+                for chunk in _split_utf16(entry, description_limit):
+                    if current_page and _utf16_length(current_page) + _utf16_length(chunk) > description_limit:
                         pages.append(current_page)
                         current_page = ""
-                    pages.append(entry[:description_limit])
-                    entry = entry[description_limit:]
-                if current_page and len(current_page) + len(entry) > description_limit:
-                    pages.append(current_page)
-                    current_page = ""
-                current_page += entry
+                    current_page += chunk
             if current_page:
                 pages.append(current_page)
             if not pages:
-                pages.append(f"No missions are currently listed for the {faction.value} faction.")
+                if faction.value == "Universal":
+                    pages.append("No missions are currently listed across any faction.")
+                else:
+                    pages.append(f"No missions are currently listed for the {faction.value} faction.")
 
-            view = MissionPaginationView(pages, embed_color, faction.value)
+            view = MissionPaginationView(pages, embed_color, board_faction)
             view.message = await ctx.send(embed=view.create_embed(), view=view)
         except Exception as exc:
             print(f"[all_missions] {type(exc).__name__}: {exc}")
             traceback.print_exc(limit=2)
-            await ctx.send("❌ Unable to load missions right now. Please try again later.", ephemeral=True)
+            await _safe_mission_send(ctx, "❌ Unable to load missions right now. Please try again later.")
         finally:
             if session is not None:
                 session.close()
@@ -402,45 +461,50 @@ class MissionCog(commands.Cog):
     @commands.hybrid_command(name="mission_info", description="Show info for specified mission ID (1-10).")
     @app_commands.describe(m_id="ID of mission",
                            faction='What faction missions to show?')
-    @app_commands.choices(faction=[
-        app_commands.Choice(name="Rogue", value="Rogue"),
-        app_commands.Choice(name="Imperial", value="Imperial"),
-        app_commands.Choice(name="Rebel", value="Rebel"),
-        app_commands.Choice(name="Mandalorian", value="Mandalorian"),
-    ])
+    @app_commands.choices(faction=faction_choices())
     async def mission_info(self, ctx, m_id: int, faction: app_commands.Choice[str]):
-        session = Session()
-        if m_id not in range(1, 11):
-            await ctx.send("❌ Invalid mission ID. Please enter a number from 1 to 10.")
-        else:
-            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
-            if m_id > len(missions):
-                await ctx.send("❌ That mission ID doesn't exist for the selected faction.")
-                session.close()
+        session = None
+        try:
+            await _defer_mission_context(ctx)
+            try:
+                mission_id = int(m_id)
+            except (TypeError, ValueError):
+                await _safe_mission_send(ctx, "❌ Invalid mission ID. Please enter a number from 1 to 10.")
                 return
-            mission = missions[m_id - 1]
 
-            faction_colors = {
-                "Rogue": discord.Colour.from_rgb(220, 20, 60),
-                "Imperial": discord.Colour.from_rgb(0, 0, 0),
-                "Rebel": discord.Colour.from_rgb(255, 165, 0),
-                "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
-            }
-            embed_color = faction_colors.get(faction.value, discord.Colour.default())
+            if mission_id not in range(1, 11):
+                await _safe_mission_send(ctx, "❌ Invalid mission ID. Please enter a number from 1 to 10.")
+                return
 
+            session = Session()
+            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+            if mission_id > len(missions):
+                await _safe_mission_send(ctx, "❌ That mission ID doesn't exist for the selected faction.")
+                return
+
+            mission = missions[mission_id - 1]
+            embed_color = FACTION_COLORS.get(faction.value, discord.Colour.default())
             embed = discord.Embed(
                 colour=embed_color,
-                title=f"📘 {faction.value} Mission Info — ID: {m_id}",
-                description=(
-                    f"**🎯 {mission.title}**\n"
-                    f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
-                    f"> 📌 Status: `{mission.availability}`\n"
-                    f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
-                    f"> 📝 Description:\n{mission.description}"
-                )
+                title=f"📘 {faction.value} Mission Info — ID: {mission_id}",
+                description=_mission_embed_description(mission)
             )
-            await ctx.send(embed=embed)
-        session.close()
+            await _safe_mission_send(ctx, embed=embed)
+        except SQLAlchemyError as exc:
+            if session is not None:
+                _safe_mission_rollback(session)
+            print(f"[mission_info] {type(exc).__name__}: {exc}")
+            await _safe_mission_send(ctx, "❌ Unable to load that mission right now. Please try again later.")
+        except Exception as exc:
+            print(f"[mission_info] {type(exc).__name__}: {exc}")
+            traceback.print_exc(limit=2)
+            await _safe_mission_send(ctx, "❌ Unable to show mission info right now. Please try again later.")
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception as exc:
+                    print(f"[mission_info close] {type(exc).__name__}: {exc}")
 
 
     @commands.hybrid_command(name="delete_mission", description="Delete mission by specified mission ID (1-10).")
@@ -448,76 +512,94 @@ class MissionCog(commands.Cog):
     @app_commands.check(moderator_check)
     @app_commands.describe(m_id="ID of mission",
                            faction='What faction mission to delete?')
-    @app_commands.choices(faction=[
-        app_commands.Choice(name="Rogue", value="Rogue"),
-        app_commands.Choice(name="Imperial", value="Imperial"),
-        app_commands.Choice(name="Rebel", value="Rebel"),
-        app_commands.Choice(name="Mandalorian", value="Mandalorian"),
-    ])
+    @app_commands.choices(faction=faction_choices())
     async def delete_mission(self, ctx, m_id: int, faction: app_commands.Choice[str]):
-        session = Session()
-        if m_id not in range(1, 11):
-            await ctx.send("❌ Invalid mission ID. Please enter a number from 1 to 10.")
-        else:
-            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
-
-            if m_id > len(missions):
-                await ctx.send("❌ That mission ID doesn't exist for the selected faction.")
-                session.close()
+        session = None
+        try:
+            await _defer_mission_context(ctx)
+            try:
+                mission_id = int(m_id)
+            except (TypeError, ValueError):
+                await _safe_mission_send(ctx, "❌ Invalid mission ID. Please enter a number from 1 to 10.")
                 return
 
-            mission = missions[m_id - 1]
+            if mission_id not in range(1, 11):
+                await _safe_mission_send(ctx, "❌ Invalid mission ID. Please enter a number from 1 to 10.")
+                return
 
-            faction_colors = {
-                "Rogue": discord.Colour.from_rgb(220, 20, 60),
-                "Imperial": discord.Colour.from_rgb(0, 0, 0),
-                "Rebel": discord.Colour.from_rgb(255, 165, 0),
-                "Mandalorian": discord.Colour.from_rgb(149, 0, 255)
-            }
-            embed_color = faction_colors.get(faction.value, discord.Colour.default())
+            session = Session()
+            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+            if mission_id > len(missions):
+                await _safe_mission_send(ctx, "❌ That mission ID doesn't exist for the selected faction.")
+                return
 
+            mission = missions[mission_id - 1]
+            embed_color = FACTION_COLORS.get(faction.value, discord.Colour.default())
             embed = discord.Embed(
                 colour=embed_color,
-                title=f"🗑️ Confirm Deletion — {faction.value} Mission ID: {m_id}",
-                description=(
-                    f"**🎯 {mission.title}**\n"
-                    f"> ⚙️ Difficulty: `{mission.difficulty}`\n"
-                    f"> 📌 Status: `{mission.availability}`\n"
-                    f"> 💰 Reward: <:credits:1099938341467738122> **{mission.reward:,}**\n"
-                    f"> 📝 Description:\n{mission.description}"
-                )
+                title=f"🗑️ Confirm Deletion — {faction.value} Mission ID: {mission_id}",
+                description=_mission_embed_description(mission)
             )
             embed.set_footer(text="✅ to confirm, or ❌ to cancel.")
 
-            bot_response = await ctx.send(embed=embed)
-            await bot_response.add_reaction("✅")
-            await bot_response.add_reaction("❌")
+            bot_response = await _safe_mission_send(ctx, embed=embed)
+            if bot_response is None:
+                return
+
+            try:
+                await bot_response.add_reaction("✅")
+                await bot_response.add_reaction("❌")
+            except Exception as exc:
+                print(f"[delete_mission reactions] {type(exc).__name__}: {exc}")
+                await _safe_mission_send(ctx, "❌ Unable to start the deletion confirmation. Please try again later.")
+                return
 
             def check(reaction, user):
                 return user == ctx.author and str(reaction.emoji) in ["✅", "❌"] and reaction.message == bot_response
 
             try:
                 reaction, user = await self.bot.wait_for('reaction_add', timeout=60.0, check=check)
-                if str(reaction.emoji) == "✅":
+            except asyncio.TimeoutError:
+                await _safe_mission_send(ctx, "Confirmation timed out.")
+                return
+            except Exception as exc:
+                print(f"[delete_mission confirmation] {type(exc).__name__}: {exc}")
+                await _safe_mission_send(ctx, "❌ Unable to process the deletion confirmation. Please try again later.")
+                return
+
+            if str(reaction.emoji) == "✅":
+                try:
                     session.delete(mission)
                     session.commit()
-                    await ctx.send("Mission deleted.")
-                elif str(reaction.emoji) == "❌":
-                    await ctx.send("Canceled request.")
-            except asyncio.TimeoutError:
-                await ctx.send("Confirmation timed out.")
-        session.close()
+                except Exception as exc:
+                    _safe_mission_rollback(session)
+                    print(f"[delete_mission database] {type(exc).__name__}: {exc}")
+                    await _safe_mission_send(ctx, "❌ Unable to delete that mission right now. Please try again later.")
+                else:
+                    await _safe_mission_send(ctx, "Mission deleted.")
+            elif str(reaction.emoji) == "❌":
+                await _safe_mission_send(ctx, "Canceled request.")
+        except SQLAlchemyError as exc:
+            if session is not None:
+                _safe_mission_rollback(session)
+            print(f"[delete_mission] {type(exc).__name__}: {exc}")
+            await _safe_mission_send(ctx, "❌ Unable to access missions right now. Please try again later.")
+        except Exception as exc:
+            print(f"[delete_mission] {type(exc).__name__}: {exc}")
+            traceback.print_exc(limit=2)
+            await _safe_mission_send(ctx, "❌ Unable to delete that mission right now. Please try again later.")
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception as exc:
+                    print(f"[delete_mission close] {type(exc).__name__}: {exc}")
 
 
     @app_commands.command(name="generate_missions", description="Generate missions for the specified faction")
     @app_commands.check(moderator_check)
     @app_commands.describe(faction='What faction to generate missions for?', amount="Number of missions to generate (default: Fills up mission board to 10 total missions)")
-    @app_commands.choices(faction=[
-        app_commands.Choice(name="Rogue", value="Rogue"),
-        app_commands.Choice(name="Imperial", value="Imperial"),
-        app_commands.Choice(name="Rebel", value="Rebel"),
-        app_commands.Choice(name="Mandalorian", value="Mandalorian"),
-    ])
+    @app_commands.choices(faction=faction_choices())
     async def generate_missions(self, interaction: discord.Interaction, faction: app_commands.Choice[str], amount: int = 10):
         await interaction.response.defer()
         deepseek_client = get_deepseek_client()

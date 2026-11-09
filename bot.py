@@ -105,7 +105,7 @@ def run_discord_bot():
             title="Help Menu"
         )
         embed.add_field(name="Show missions",
-                        value="Run /all_missions (preferred) or >all_missions to show available missions for faction specified (Rogue, Imperial, Rebel, Mandalorian).\n\nExample Command: >all_missions Mando\n\n")
+                        value="Run /all_missions (preferred) or >all_missions to show available missions for a faction (Rogue, Imperial, Rebel, Mandalorian, CIS) or across all factions with Universal.\n\nExample Command: /all_missions faction:Universal\n\n")
         embed.add_field(name="Show bounties",
                         value="Run /all_bounties (preferred) or >all_bounties to show available bounties.")
         embed.add_field(name="Add bounty",
