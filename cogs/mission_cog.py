@@ -42,11 +42,11 @@ async def mission_name_autocomplete(interaction: discord.Interaction, current: s
     session = None
     try:
         faction = _selected_faction(interaction)
-        if not faction:
-            return []
 
         session = Session()
-        mission_query = session.query(Missions).filter(Missions.faction == faction)
+        mission_query = session.query(Missions)
+        if faction:
+            mission_query = mission_query.filter(Missions.faction == faction)
         search_text = (current or "").strip()
         if search_text:
             mission_query = mission_query.filter(Missions.title.ilike(f"%{search_text}%"))
@@ -558,7 +558,7 @@ class MissionCog(commands.Cog):
                            faction='What faction mission to delete?')
     @app_commands.choices(faction=faction_choices())
     @app_commands.autocomplete(mission=mission_name_autocomplete)
-    async def delete_mission(self, ctx, mission: str, faction: app_commands.Choice[str]):
+    async def delete_mission(self, ctx, faction: app_commands.Choice[str], mission: str):
         session = None
         try:
             await _defer_mission_context(ctx)
