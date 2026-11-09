@@ -31,6 +31,50 @@ def faction_choices(include_universal=False):
     return choices
 
 
+def _selected_faction(interaction):
+    namespace = getattr(interaction, "namespace", None)
+    faction = getattr(namespace, "faction", None)
+    return getattr(faction, "value", faction)
+
+
+async def mission_name_autocomplete(interaction: discord.Interaction, current: str):
+    """Suggest missions for the faction currently selected in the command."""
+    session = None
+    try:
+        faction = _selected_faction(interaction)
+        if not faction:
+            return []
+
+        session = Session()
+        mission_query = session.query(Missions).filter(Missions.faction == faction)
+        search_text = (current or "").strip()
+        if search_text:
+            mission_query = mission_query.filter(Missions.title.ilike(f"%{search_text}%"))
+
+        missions = (
+            mission_query
+            .order_by(asc(Missions.title), asc(Missions.id))
+            .limit(25)
+            .all()
+        )
+        return [
+            app_commands.Choice(
+                name=f"{str(mission.title)[:70]} — {mission.faction} (ID: {mission.id})",
+                value=f"id:{mission.id}",
+            )
+            for mission in missions
+        ]
+    except SQLAlchemyError as exc:
+        print(f"[delete_mission autocomplete] {type(exc).__name__}: {exc}")
+        return []
+    finally:
+        if session is not None:
+            try:
+                session.close()
+            except Exception as exc:
+                print(f"[delete_mission autocomplete close] {type(exc).__name__}: {exc}")
+
+
 def _utf16_length(value):
     return len(value.encode("utf-16-le", errors="replace")) // 2
 
@@ -507,38 +551,62 @@ class MissionCog(commands.Cog):
                     print(f"[mission_info close] {type(exc).__name__}: {exc}")
 
 
-    @commands.hybrid_command(name="delete_mission", description="Delete mission by specified mission ID (1-10).")
+    @commands.hybrid_command(name="delete_mission", description="Delete a mission by name or board ID.")
     @commands.check(moderator_check)
     @app_commands.check(moderator_check)
-    @app_commands.describe(m_id="ID of mission",
+    @app_commands.describe(mission="Mission title, autocomplete selection, or legacy board ID",
                            faction='What faction mission to delete?')
     @app_commands.choices(faction=faction_choices())
-    async def delete_mission(self, ctx, m_id: int, faction: app_commands.Choice[str]):
+    @app_commands.autocomplete(mission=mission_name_autocomplete)
+    async def delete_mission(self, ctx, mission: str, faction: app_commands.Choice[str]):
         session = None
         try:
             await _defer_mission_context(ctx)
-            try:
-                mission_id = int(m_id)
-            except (TypeError, ValueError):
-                await _safe_mission_send(ctx, "❌ Invalid mission ID. Please enter a number from 1 to 10.")
-                return
-
-            if mission_id not in range(1, 11):
-                await _safe_mission_send(ctx, "❌ Invalid mission ID. Please enter a number from 1 to 10.")
-                return
-
             session = Session()
-            missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
-            if mission_id > len(missions):
-                await _safe_mission_send(ctx, "❌ That mission ID doesn't exist for the selected faction.")
-                return
+            selector = str(mission or "").strip()
+            if selector.lower().startswith("id:"):
+                try:
+                    database_id = int(selector[3:].strip())
+                except (TypeError, ValueError):
+                    await _safe_mission_send(ctx, "❌ Invalid mission selection. Choose a mission from the autocomplete list.")
+                    return
 
-            mission = missions[mission_id - 1]
+                if database_id <= 0:
+                    await _safe_mission_send(ctx, "❌ Invalid mission selection. Choose a mission from the autocomplete list.")
+                    return
+
+                targeted_mission = (
+                    session.query(Missions)
+                    .filter_by(id=database_id, faction=faction.value)
+                    .one_or_none()
+                )
+                if targeted_mission is None:
+                    await _safe_mission_send(ctx, "❌ That mission selection doesn't exist for the selected faction.")
+                    return
+                mission_reference = f"Database ID: {targeted_mission.id}"
+            else:
+                try:
+                    mission_id = int(selector)
+                except (TypeError, ValueError):
+                    await _safe_mission_send(ctx, "❌ Invalid mission selection. Choose a mission from the autocomplete list or enter a board ID from 1 to 10.")
+                    return
+
+                if mission_id not in range(1, 11):
+                    await _safe_mission_send(ctx, "❌ Invalid mission ID. Must be between 1 and 10.")
+                    return
+
+                missions = session.query(Missions).filter_by(faction=faction.value).order_by(asc(Missions.reward)).all()
+                if mission_id > len(missions):
+                    await _safe_mission_send(ctx, "❌ That mission ID doesn't exist for the selected faction.")
+                    return
+                targeted_mission = missions[mission_id - 1]
+                mission_reference = f"Board ID: {mission_id} (Database ID: {targeted_mission.id})"
+
             embed_color = FACTION_COLORS.get(faction.value, discord.Colour.default())
             embed = discord.Embed(
                 colour=embed_color,
-                title=f"🗑️ Confirm Deletion — {faction.value} Mission ID: {mission_id}",
-                description=_mission_embed_description(mission)
+                title=f"🗑️ Confirm Deletion — {faction.value} {mission_reference}",
+                description=_mission_embed_description(targeted_mission)
             )
             embed.set_footer(text="✅ to confirm, or ❌ to cancel.")
 
@@ -569,7 +637,7 @@ class MissionCog(commands.Cog):
 
             if str(reaction.emoji) == "✅":
                 try:
-                    session.delete(mission)
+                    session.delete(targeted_mission)
                     session.commit()
                 except Exception as exc:
                     _safe_mission_rollback(session)

@@ -115,7 +115,7 @@ def run_discord_bot():
         embed.add_field(name="Edit/status missions",
                         value="`Moderator role required`\nUse /edit_mission to update a mission and /mission_status to toggle its availability.\n\n")
         embed.add_field(name="Delete mission",
-                        value="`Moderator role required`\nRun /delete_mission to delete a mission.\n\nExample Command: /delete_mission m_id:2 faction:Mandalorian\n\n")
+                        value="`Moderator role required`\nRun /delete_mission and choose a mission by name from autocomplete.\n\nExample Command: /delete_mission mission:\"Mission title\" faction:Mandalorian\n\n")
         embed.add_field(name="Delete bounty",
                         value="`Moderator role required`\nRun /delete_bounty to delete a bounty.\n\nExample Command: /delete_bounty b_id:2\n\n")
         embed.add_field(name="Generate mission/bounty boards",
