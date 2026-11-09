@@ -4,6 +4,8 @@ from discord import app_commands
 from discord.ext import commands
 import os
 
+from utils.command_sync import sync_guild_commands
+
 
 class DevCog(commands.Cog):
     def __init__(self, bot):
@@ -134,16 +136,16 @@ class DevCog(commands.Cog):
                 await ctx.send(error_msg)
 
 
-    @commands.hybrid_command(name='reload', description="Reload the bot's command tree")
+    @commands.hybrid_command(name='reload', description="Resync R0's slash commands in this server")
     @commands.has_role("Owner")
     async def reload(self, ctx):
         try:
-            await ctx.send("Reloading command tree...")
-            commands_synced = await self.bot.tree.sync()
-            await ctx.send(f"Tree.sync reloaded. {len(commands_synced)} commands updated.")
-        except Exception as e:
-            print(f"Error in reload command: {e}")
-            await ctx.send("An error occurred while reloading the command tree.")
+            await ctx.defer(ephemeral=True)
+            commands_synced = await sync_guild_commands(self.bot.tree)
+            await ctx.send(f"Synced {len(commands_synced)} server commands.", ephemeral=True)
+        except discord.HTTPException as exc:
+            print(f"Error resyncing server commands: {exc}")
+            await ctx.send("Unable to resync server commands.", ephemeral=True)
 
 
 

@@ -31,6 +31,8 @@ load_env_file()
 
 
 def run_discord_bot():
+    from utils.command_sync import GUILD_ID, sync_guild_commands
+
     intents = discord.Intents.default()
     intents.message_content = True
     intents.members = True
@@ -41,10 +43,8 @@ def run_discord_bot():
         await bot.change_presence(
             activity=discord.Activity(type=discord.ActivityType.playing, name=">help | Indexing..."))
 
-    ALLOWED_GUILD_ID = 1389425312915263509
-
     async def verify_guild(guild):
-        if guild.id != ALLOWED_GUILD_ID:
+        if guild.id != GUILD_ID:
             print(f"Leaving unauthorized guild: {guild.name} ({guild.id})")
             await guild.leave()
 
@@ -64,14 +64,17 @@ def run_discord_bot():
 
     @bot.event
     async def on_command_error(ctx, error):
-        if isinstance(error, commands.MissingRole):
-            try:
-                await ctx.interaction.response.send_message(
-                    "🚫 You do not have the required role to use this command.",
-                    ephemeral=True
-                )
-            except:
-                await ctx.send("🚫 You do not have the required role.", delete_after=10)
+        if isinstance(error, commands.CommandNotFound):
+            return
+        if isinstance(error, commands.CheckFailure):
+            message = "🚫 You do not have permission to use this command here."
+        elif isinstance(error, commands.UserInputError):
+            message = f"❌ Check the command options. Try `/{ctx.command.name}` for guided input."
+        else:
+            original = getattr(error, "original", error)
+            traceback.print_exception(type(original), original, original.__traceback__)
+            message = "❌ Something went wrong while processing that command. Please try again later."
+        await ctx.send(message, ephemeral=ctx.interaction is not None)
 
     @bot.tree.error
     async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -79,8 +82,8 @@ def run_discord_bot():
 
         if isinstance(original_error, app_commands.MissingAnyRole):
             message = "🚫 You do not have any of the required roles to use this command."
-        elif isinstance(original_error, app_commands.MissingRole):
-            message = "🚫 You do not have the required role to use this command."
+        elif isinstance(original_error, app_commands.CheckFailure):
+            message = "🚫 You do not have permission to use this command here."
         else:
             traceback.print_exception(
                 type(original_error),
@@ -145,10 +148,8 @@ def run_discord_bot():
         for filename in os.listdir("./cogs"):
             if filename.endswith(".py") and filename != "__init__.py":
                 await bot.load_extension(f"cogs.{filename[:-3]}")
-        guild = discord.Object(id=ALLOWED_GUILD_ID)
-        bot.tree.copy_global_to(guild=guild)
-        synced_commands = await bot.tree.sync(guild=guild)
-        print(f"Synced {len(synced_commands)} application commands to guild {ALLOWED_GUILD_ID}")
+        synced_commands = await sync_guild_commands(bot.tree)
+        print(f"Synced {len(synced_commands)} application commands to guild {GUILD_ID}")
 
     bot.setup_hook = setup_hook
 
