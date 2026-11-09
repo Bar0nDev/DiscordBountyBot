@@ -73,11 +73,7 @@ jobs:
           python -m pip install --user --disable-pip-version-check -r requirements.txt
 
           app_pids() {
-            for pid in $(pgrep -f '[p]ython main.py' || true); do
-              if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$app" ]; then
-                printf '%s\n' "$pid"
-              fi
-            done
+            pgrep -u "$(id -u)" -f '[p]ython main.py' || true
           }
 
           if tmux has-session -t "$session" 2>/dev/null; then
@@ -131,11 +127,7 @@ jobs:
           tmux has-session -t R0U41
 
           app_pids() {
-            for pid in $(pgrep -f '[p]ython main.py' || true); do
-              if [ "$(readlink "/proc/$pid/cwd" 2>/dev/null || true)" = "$app" ]; then
-                printf '%s\n' "$pid"
-              fi
-            done
+            pgrep -u "$(id -u)" -f '[p]ython main.py' || true
           }
 
           seen=0
