@@ -1,4 +1,3 @@
-import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -19,7 +18,8 @@ class DevCog(commands.Cog):
             files_to_export = [
                 ("info.db", "The database file does not exist."),
                 ("nochat_channels.pkl", "The no-chat channels file does not exist."),
-                ("chat_sessions.pkl", "The chat sessions file does not exist."),
+                ("chat_sessions.pkl", "The legacy shared chat history file does not exist."),
+                ("data/chat_sessions.pkl", "The channel chat history does not exist."),
                 ("data/news.pkl", "The news file does not exist.")
             ]
 
@@ -45,9 +45,8 @@ class DevCog(commands.Cog):
                     else:
                         await ctx.interaction.response.send_message(files=files_to_send, ephemeral=True)
                 else:
-                    file_msg = await ctx.send(files=files_to_send)
-                    await asyncio.sleep(10)
-                    await file_msg.delete()
+                    await ctx.author.send(files=files_to_send)
+                    await ctx.send("I sent the export to your DMs.")
 
             # Report missing files
             if missing_files:
@@ -117,9 +116,8 @@ class DevCog(commands.Cog):
                 else:
                     await ctx.interaction.response.send_message(success_msg, file=discord_file, ephemeral=True)
             else:
-                file_msg = await ctx.send(success_msg, file=discord_file)
-                await asyncio.sleep(10)
-                await file_msg.delete()
+                await ctx.author.send(success_msg, file=discord_file)
+                await ctx.send("I sent the RP export to your DMs.")
 
         except Exception as e:
             print(f"Error in export_rp command: {e}")

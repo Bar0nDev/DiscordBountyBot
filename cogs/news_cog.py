@@ -4,18 +4,21 @@ from discord import app_commands
 import os
 import pickle
 import asyncio
+import logging
+import tempfile
 import urllib.error
 import urllib.request
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from openai import AsyncOpenAI
 import json
-import traceback
 
-client = AsyncOpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com"
-)
+def get_deepseek_client():
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    return AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com") if api_key else None
+
+
+client = get_deepseek_client()
 
 # MODEL = "deepseek-ai/DeepSeek-V3.2-TEE"
 # MODEL = "deepseek-ai/DeepSeek-V3-0324-TEE"
@@ -25,6 +28,26 @@ client = AsyncOpenAI(
 MODEL = "deepseek-chat"
 
 from utils.utils import NEWS_URL
+
+logger = logging.getLogger(__name__)
+
+DISCORD_MAX_EMBED_FIELDS = 25
+DISCORD_MAX_EMBED_CHARACTERS = 6000
+DISCORD_MAX_FIELD_NAME = 256
+DISCORD_MAX_FIELD_VALUE = 1024
+
+
+def _utf16_length(value: str) -> int:
+    """Return the length Discord uses for a string with supplementary Unicode."""
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _truncate_utf16(value: str, maximum: int) -> str:
+    """Truncate to a Discord UTF-16 limit without leaving a broken surrogate."""
+    encoded = value.encode("utf-16-le")
+    if len(encoded) <= maximum * 2:
+        return value
+    return encoded[:maximum * 2].decode("utf-16-le", errors="ignore")
 
 
 def _post_webhook(request):
@@ -53,9 +76,14 @@ class NewsCog(commands.Cog):
         self.scheduler = AsyncIOScheduler()
         self.scheduler.add_job(self.news_report, 'interval', hours=12)
         self.scheduler_started = False
+        self.startup_report_started = False
         # Fixed to match Document 1's path structure
         self.pickle_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "news.pkl")
         self.pickle_lock = asyncio.Lock()
+        self.publish_lock = asyncio.Lock()
+        pickle_directory = os.path.dirname(self.pickle_file)
+        if pickle_directory:
+            os.makedirs(pickle_directory, exist_ok=True)
 
     def _load_pickle_data(self) -> List[Dict[str, Any]]:
         """Load data from pickle file. Creates empty list if file doesn't exist."""
@@ -66,9 +94,34 @@ class NewsCog(commands.Cog):
             return []
 
     def _save_pickle_data(self, data: List[Dict[str, Any]]):
-        """Save data to pickle file."""
-        with open(self.pickle_file, 'wb') as f:
-            pickle.dump(data, f)
+        """Atomically replace the pickle file after fully writing its contents."""
+        pickle_directory = os.path.dirname(self.pickle_file)
+        if pickle_directory:
+            os.makedirs(pickle_directory, exist_ok=True)
+
+        temporary_path = None
+        file_descriptor = None
+        try:
+            file_descriptor, temporary_path = tempfile.mkstemp(
+                prefix=".news-",
+                suffix=".tmp",
+                dir=pickle_directory or ".",
+            )
+            with os.fdopen(file_descriptor, "wb") as pickle_file:
+                file_descriptor = None
+                pickle.dump(data, pickle_file)
+                pickle_file.flush()
+                os.fsync(pickle_file.fileno())
+            os.replace(temporary_path, self.pickle_file)
+            temporary_path = None
+        finally:
+            if file_descriptor is not None:
+                os.close(file_descriptor)
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
 
     async def _add_to_pickle(self, story_data: Dict[str, Any]):
         """Thread-safe method to add story to pickle file."""
@@ -117,7 +170,7 @@ class NewsCog(commands.Cog):
 
         # Validate the response has required fields
         if "headline" not in parsed or "report" not in parsed:
-            raise ValueError(f"AI response missing required fields. Got: {parsed}")
+            raise ValueError("AI response missing required fields")
 
         return NewsReport(**parsed)
 
@@ -191,20 +244,25 @@ class NewsCog(commands.Cog):
             # Handle both story ideas and complete user stories
             if story.get('story_type') == 'story_idea':
                 # Story idea from gamemaster - show the original idea
-                title = story.get('original_idea', 'No idea text')[:50]
-                author = story.get('author', 'Unknown')
+                original_idea = str(story.get('original_idea', 'No idea text'))
+                title = _truncate_utf16(original_idea, 50)
+                author = _truncate_utf16(str(story.get('author', 'Unknown')), 256)
                 embed["fields"].append({
                     "name": f"{i}. [IDEA] {title}{'...' if len(story.get('original_idea', '')) > 50 else ''}",
-                    "value": f"Type: Story Idea | Author: {author}",
+                    "value": _truncate_utf16(f"Type: Story Idea | Author: {author}", DISCORD_MAX_FIELD_VALUE),
                     "inline": False
                 })
             else:
                 # Complete user story - show headline
-                headline = story.get('headline', 'No headline')[:50]
-                author = story.get('author', 'Unknown')
+                raw_headline = str(story.get('headline', 'No headline'))
+                headline = _truncate_utf16(raw_headline, 50)
+                author = _truncate_utf16(str(story.get('author', 'Unknown')), 256)
                 embed["fields"].append({
-                    "name": f"{i}. {headline}{'...' if len(story.get('headline', '')) > 50 else ''}",
-                    "value": f"Type: {story.get('story_type', 'unknown')} | Author: {author}",
+                    "name": f"{i}. {headline}{'...' if _utf16_length(raw_headline) > 50 else ''}",
+                    "value": _truncate_utf16(
+                        f"Type: {str(story.get('story_type', 'unknown'))} | Author: {author}",
+                        DISCORD_MAX_FIELD_VALUE,
+                    ),
                     "inline": False
                 })
 
@@ -218,110 +276,113 @@ class NewsCog(commands.Cog):
         await ctx.send(embed=embed)
 
     async def news_report(self):
-        # Get all entries from pickle
+        """Publish one report without allowing overlapping queue acknowledgements."""
+        async with self.publish_lock:
+            await self._publish_news_report()
+
+    async def _publish_news_report(self):
+        """Build and publish a report, acknowledging only entries in a successful payload."""
+        # A missing webhook is a no-op. In particular, do not process model input while
+        # delivery is disabled because there is no successful publish to acknowledge.
+        if not NEWS_URL:
+            logger.info("news webhook skipped: missing_url")
+            return
+
         all_pickle_data = await self._get_user_stories()
 
-        # Separate story ideas from complete user stories
         user_stories = []
         story_ideas = []
-
-        for entry in all_pickle_data:
+        for index, entry in enumerate(all_pickle_data):
             if entry.get("story_type") == "story_idea" and entry.get("original_idea"):
-                story_ideas.append(entry)
+                story_ideas.append((index, entry))
             elif entry.get("headline") and entry.get("report"):
-                user_stories.append(entry)
+                user_stories.append((index, entry))
 
-        # Process only the OLDEST story idea (first one in the list)
         processed_idea = None
+        processed_idea_index = None
         if story_ideas:
-            oldest_idea = story_ideas[0]  # Get the first/oldest story idea
+            processed_idea_index, oldest_idea = story_ideas[0]
             try:
                 processed_idea = await self._process_story_idea(oldest_idea["original_idea"])
-                print(f"Processed story idea: {oldest_idea['original_idea']}")
-                print(f"Processed result: {processed_idea}")  # Debug line
-            except Exception as e:
-                print(f"Failed to process story idea: {e}")
+            except Exception:
+                logger.warning("news model failure: story_idea")
+                # The idea remains queued. Complete user stories can still be delivered
+                # in the same report, if there are any.
+                processed_idea = None
+                processed_idea_index = None
 
-        # Determine how many AI stories to generate
-        total_user_content = len(user_stories) + (1 if processed_idea else 0)
+        report_candidates = []
+        for index, story in user_stories:
+            try:
+                report_candidates.append((index, NewsReport(
+                    headline=story["headline"],
+                    report=story["report"],
+                )))
+            except Exception:
+                # Invalid entries are retained rather than making the whole queue unsafe.
+                continue
 
-        if total_user_content > 0:
-            # If there are user stories, generate no AI stories
-            ai_stories_needed = 0
-        else:
-            # If no user stories, generate 5 AI stories
+        if processed_idea is not None:
+            report_candidates.append((processed_idea_index, processed_idea))
+
+        ai_news = []
+        if not report_candidates:
+            # A failed story-idea conversion is not a reason to replace the queued idea
+            # with generated content. It must remain pending for a later attempt.
+            if story_ideas:
+                return
+
             ai_stories_needed = 5
-
-        # Generate AI stories using Chutes AI
-        # Generate AI stories using Chutes AI
-        prompt = (
-            "You are the Holonet News, the primary news source for stories and events across the Star Wars galaxy. "
-            "The year is 2BBY. Imperials rule, and small rebel cells are emerging. "
-            "In a witty yet serious tone, generate Star Wars news reports. "
-            "Avoid mentioning canon characters like Darth Vader. "
-            "Prepend an emoji to the headline relevant to the topic. "
-            "Lothal civilians has also been recently nuked in the server lore, so locals are upset at the Rebel Alliance if ever news stories are made about Lothal and Imperials are now controlling the narrative. News stories about Lothal should be very rare however and"
-            "it is absolutely ok not to generate any news story about Lothal."
-            f"\n\nGenerate exactly {ai_stories_needed} different news stories. "
-            'You must respond with a JSON object in this format:\n'
-            '{"stories": [{"headline": "...", "report": "..."}, {"headline": "...", "report": "..."}]}\n'
-            "Each story must have both a 'headline' and a 'report' field."
-        )
-
-        try:
-            response = await client.chat.completions.create(
-                model=MODEL,
-                temperature=0.8,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user",
-                     "content": f"Generate {ai_stories_needed} Star Wars News Reports in the specified JSON format"}
-                ],
-                response_format={"type": "json_object"}
+            prompt = (
+                "You are the Holonet News, the primary news source for stories and events across the Star Wars galaxy. "
+                "The year is 2BBY. Imperials rule, and small rebel cells are emerging. "
+                "In a witty yet serious tone, generate Star Wars news reports. "
+                "Avoid mentioning canon characters like Darth Vader. "
+                "Prepend an emoji to the headline relevant to the topic. "
+                "Lothal civilians has also been recently nuked in the server lore, so locals are upset at the Rebel Alliance if ever news stories are made about Lothal and Imperials are now controlling the narrative. News stories about Lothal should be very rare however and"
+                "it is absolutely ok not to generate any news story about Lothal."
+                f"\n\nGenerate exactly {ai_stories_needed} different news stories. "
+                '{"stories": [{"headline": "...", "report": "..."}, {"headline": "...", "report": "..."}]}\n'
+                "Each story must have both a 'headline' and a 'report' field."
             )
 
-            parsed_response = json.loads(response.choices[0].message.content)
-            print(f"AI Response: {parsed_response}")  # Debug line
+            try:
+                response = await client.chat.completions.create(
+                    model=MODEL,
+                    temperature=0.8,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user",
+                         "content": f"Generate {ai_stories_needed} Star Wars News Reports in the specified JSON format"}
+                    ],
+                    response_format={"type": "json_object"}
+                )
 
-            # Handle different possible JSON structures
-            if isinstance(parsed_response, list):
-                ai_news_data = parsed_response
-            elif "stories" in parsed_response:
-                ai_news_data = parsed_response["stories"]
-            elif "news" in parsed_response:
-                ai_news_data = parsed_response["news"]
-            elif "headline" in parsed_response and "report" in parsed_response:
-                # Single story wrapped as object
-                ai_news_data = [parsed_response]
-            else:
-                print(f"Unexpected JSON structure: {parsed_response}")
-                ai_news_data = []
+                parsed_response = json.loads(response.choices[0].message.content)
+                if isinstance(parsed_response, list):
+                    ai_news_data = parsed_response
+                elif isinstance(parsed_response, dict) and "stories" in parsed_response:
+                    ai_news_data = parsed_response["stories"]
+                elif isinstance(parsed_response, dict) and "news" in parsed_response:
+                    ai_news_data = parsed_response["news"]
+                elif isinstance(parsed_response, dict) and {
+                    "headline", "report"
+                }.issubset(parsed_response):
+                    ai_news_data = [parsed_response]
+                else:
+                    ai_news_data = []
 
-            ai_news = [NewsReport(**story) for story in ai_news_data[:ai_stories_needed]]
+                ai_news = [
+                    NewsReport(**story)
+                    for story in ai_news_data[:ai_stories_needed]
+                ]
+            except Exception:
+                logger.warning("news model failure: generated_news")
+                # No queued entries are acknowledged when model generation fails.
+                return
 
-        except Exception as e:
-            print(f"Failed to generate AI news: {e}")
-            print(f"Full error: {traceback.format_exc()}")  # Add this import: import traceback
-            ai_news = []
+            report_candidates.extend((None, report) for report in ai_news)
 
-        # Combine all stories
-        all_stories = []
-
-        # Add complete user stories
-        for story in user_stories:
-            all_stories.append(NewsReport(
-                headline=story["headline"],
-                report=story["report"]
-            ))
-
-        # Add the ONE processed story idea (if it exists)
-        if processed_idea:
-            all_stories.append(processed_idea)
-
-        # Add AI stories
-        all_stories.extend(ai_news)
-
-        # Create and send embed
         embed = {
             "title": "Holonet News Report",
             "description": "Latest updates from across the galaxy:",
@@ -335,54 +396,90 @@ class NewsCog(commands.Cog):
             }
         }
 
-        for report in all_stories:
-            headline = report.headline
-            description = report.report
+        # Discord allows at most 25 fields and 6,000 characters per embed. Truncate
+        # individual fields to their limits and stop before the aggregate limit.
+        embed_characters = _utf16_length(embed["title"]) + _utf16_length(embed["description"])
+        delivered_indices = set()
+        for source_index, report in report_candidates:
+            headline = _truncate_utf16(str(report.headline).strip(), DISCORD_MAX_FIELD_NAME)
+            description = _truncate_utf16(str(report.report).strip(), DISCORD_MAX_FIELD_VALUE)
+            if not headline or not description:
+                continue
+
+            if len(embed["fields"]) >= DISCORD_MAX_EMBED_FIELDS:
+                break
+            field_characters = _utf16_length(headline) + _utf16_length(description)
+            if embed_characters + field_characters > DISCORD_MAX_EMBED_CHARACTERS:
+                break
+
             embed["fields"].append({
-                "name": headline.strip(),
-                "value": description.strip(),
+                "name": headline,
+                "value": description,
                 "inline": False
             })
-            embed["fields"].append({
-                "name": "\u200b",
-                "value": "\u200b",
-                "inline": False
-            })
+            embed_characters += field_characters
+            if source_index is not None:
+                delivered_indices.add(source_index)
 
-        # Send the news report
-        URL = NEWS_URL
-        if URL:
-            webhook_data = {'embeds': [embed]}
-            request = urllib.request.Request(
-                URL,
-                data=json.dumps(webhook_data).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            response_status, response_body = await asyncio.to_thread(_post_webhook, request)
-            if response_status != 204:
-                print(f'Failed to send embed: {response_status}')
-                print(f'Response body: {response_body}')
-        else:
-            print("NEWS_URL is not configured; skipping webhook report")
+        if not embed["fields"]:
+            return
 
-        # Remove only processed entries from pickle
-        remaining_data = []
+        webhook_data = {"embeds": [embed]}
+        request = urllib.request.Request(
+            NEWS_URL,
+            data=json.dumps(webhook_data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            response_status, _ = await asyncio.to_thread(_post_webhook, request)
+        except Exception:
+            logger.warning("news webhook failure: transport")
+            # Delivery failures leave every queued entry untouched.
+            return
 
-        # Keep all unprocessed story ideas (skip the one we just processed)
-        if story_ideas and len(story_ideas) > 1:
-            remaining_data.extend(story_ideas[1:])
+        if not 200 <= response_status < 300:
+            logger.warning("news webhook failure: status=%s", response_status)
+            return
 
-        # Save the remaining story ideas back to pickle
+        try:
+            await self._acknowledge_entries(all_pickle_data, delivered_indices)
+        except Exception:
+            logger.warning("news queue acknowledgement failure")
+
+    async def _acknowledge_entries(
+            self,
+            snapshot: List[Dict[str, Any]],
+            delivered_indices: set,
+    ):
+        """Remove delivered snapshot entries while preserving concurrent appends."""
+        if not delivered_indices:
+            return
+
         async with self.pickle_lock:
-            self._save_pickle_data(remaining_data)
+            current_data = self._load_pickle_data()
+            if any(index >= len(current_data) for index in delivered_indices):
+                return
 
-        print(f"Remaining story ideas in queue: {len(remaining_data)}")
+            # Enqueues append to the pickle. Verify the delivered positions still
+            # contain the original entries before removing them, so a concurrent
+            # writer can never cause an unrelated entry to be acknowledged.
+            if any(current_data[index] != snapshot[index] for index in delivered_indices):
+                return
+
+            remaining_data = [
+                entry for index, entry in enumerate(current_data)
+                if index not in delivered_indices
+            ]
+            self._save_pickle_data(remaining_data)
 
     async def handle_news_report(self):
         if not self.scheduler_started:
             self.scheduler.start()
             self.scheduler_started = True
+        if self.startup_report_started:
+            return
+        self.startup_report_started = True
         await self.news_report()
 
 

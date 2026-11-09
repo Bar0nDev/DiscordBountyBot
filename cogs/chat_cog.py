@@ -1,6 +1,7 @@
 import asyncio
 import os
 import pickle
+import tempfile
 
 import discord
 from discord.ext import commands
@@ -10,11 +11,21 @@ from utils.utils import WELCOME_CHANNEL, get_nochat_channels, load_rp_sessions
 
 MAX_RECENT = 35
 SUMMARIZE_BATCH = 20
+RESPONSE_DELAY_PER_CHARACTER = 0.01
+MAX_RESPONSE_DELAY = 3.0
 
-client = AsyncOpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com",
-)
+# The original root-level file contains one shared conversation and is kept as
+# a legacy export. New memory is deliberately stored elsewhere so it cannot be
+# silently assigned to whichever channel speaks first after this change.
+CHAT_SESSIONS_PATH = os.path.join("data", "chat_sessions.pkl")
+CHAT_SESSIONS_VERSION = 1
+
+def get_deepseek_client():
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    return AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com") if api_key else None
+
+
+client = get_deepseek_client()
 MODEL = "deepseek-chat"
 
 SYSTEM_PROMPT = """You are R0-U41, an Imperial service droid assigned to Star Wars: Iron Divide, a role-playing Discord server set in 2 BBY. Your role is to enhance storytelling, answer questions, manage missions, and maintain narrative immersion.
@@ -72,6 +83,66 @@ def _normalize_recent(messages):
     return normalized
 
 
+def _empty_session_store():
+    return {"version": CHAT_SESSIONS_VERSION, "channels": {}}
+
+
+def _load_session_store():
+    """Load the channel-scoped store without reading the legacy shared file."""
+    try:
+        with open(CHAT_SESSIONS_PATH, "rb") as dbfile:
+            store = pickle.load(dbfile)
+    except (
+        FileNotFoundError,
+        EOFError,
+        pickle.UnpicklingError,
+        ModuleNotFoundError,
+        ImportError,
+        AttributeError,
+    ):
+        return _empty_session_store()
+
+    if not isinstance(store, dict) or not isinstance(store.get("channels"), dict):
+        return _empty_session_store()
+
+    return store
+
+
+def _normalize_session(session):
+    if not isinstance(session, dict):
+        return {"summary": "", "recent": []}
+
+    summary = session.get("summary", "")
+    if not isinstance(summary, str):
+        summary = str(summary or "")
+
+    return {"summary": summary, "recent": _normalize_recent(session.get("recent", []))}
+
+
+def _atomic_write_session_store(store):
+    """Write the new store atomically, leaving the legacy export unchanged."""
+    directory = os.path.dirname(CHAT_SESSIONS_PATH) or "."
+    os.makedirs(directory, exist_ok=True)
+    file_descriptor, temporary_path = tempfile.mkstemp(
+        prefix=".chat_sessions-",
+        suffix=".tmp",
+        dir=directory,
+    )
+
+    try:
+        with os.fdopen(file_descriptor, "wb") as dbfile:
+            pickle.dump(store, dbfile, protocol=pickle.HIGHEST_PROTOCOL)
+            dbfile.flush()
+            os.fsync(dbfile.fileno())
+        os.replace(temporary_path, CHAT_SESSIONS_PATH)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 class FakeCtx:
     def __init__(self, channel):
         self.channel = channel
@@ -87,23 +158,43 @@ class FakeCtx:
 class ChatCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._channel_locks = {}
+        self._storage_lock = asyncio.Lock()
+
+    def _get_channel_lock(self, channel_id):
+        return self._channel_locks.setdefault(channel_id, asyncio.Lock())
+
+    async def _load_channel_session(self, channel_id):
+        async with self._storage_lock:
+            store = _load_session_store()
+            session = store["channels"].get(str(channel_id))
+            return _normalize_session(session)
+
+    async def _save_channel_session(self, channel_id, session):
+        """Merge one channel into the latest store before atomically replacing it."""
+        async with self._storage_lock:
+            store = _load_session_store()
+            store.setdefault("version", CHAT_SESSIONS_VERSION)
+            store.setdefault("channels", {})[str(channel_id)] = {
+                "summary": session.get("summary", ""),
+                "recent": _normalize_recent(session.get("recent", [])),
+            }
+            _atomic_write_session_store(store)
 
     async def chat(self, ctx, prompt: str):
-        try:
-            with open("chat_sessions.pkl", "rb") as dbfile:
-                chat_sessions = pickle.load(dbfile)
-        except (
-            FileNotFoundError,
-            EOFError,
-            pickle.UnpicklingError,
-            ModuleNotFoundError,
-            ImportError,
-            AttributeError,
-        ):
-            chat_sessions = {}
+        channel_id = ctx.channel.id
+        async with self._get_channel_lock(channel_id):
+            await self._chat_locked(ctx, prompt, channel_id)
 
-        summary = chat_sessions.get("summary", "")
-        recent = _normalize_recent(chat_sessions.get("recent", []))
+    async def _chat_locked(self, ctx, prompt, channel_id):
+        try:
+            chat_session = await self._load_channel_session(channel_id)
+        except Exception as error:
+            print(f"An error occurred loading chat memory: {error}")
+            chat_session = {"summary": "", "recent": []}
+
+        summary = chat_session["summary"]
+        recent = chat_session["recent"]
         user_name = ctx.author.display_name
         recent.append({"role": "user", "content": f"Username {user_name}: {prompt}"})
 
@@ -158,20 +249,32 @@ class ChatCog(commands.Cog):
                 if not response_text:
                     raise RuntimeError("DeepSeek returned an empty response")
 
-                typing_time = len(response_text) * 0.03
-                await asyncio.sleep(typing_time)
+                typing_time = min(
+                    len(response_text) * RESPONSE_DELAY_PER_CHARACTER,
+                    MAX_RESPONSE_DELAY,
+                )
+                if typing_time:
+                    await asyncio.sleep(typing_time)
 
                 for index in range(0, len(response_text), 2000):
                     await ctx.send(
                         response_text[index:index + 2000],
                         allowed_mentions=discord.AllowedMentions(
-                            everyone=False, users=True, roles=True
+                            everyone=False,
+                            users=False,
+                            roles=False,
+                            replied_user=False,
                         ),
                     )
 
             recent.append({"role": "assistant", "content": response_text})
-            with open("chat_sessions.pkl", "wb") as file:
-                pickle.dump({"summary": summary, "recent": recent}, file)
+            try:
+                await self._save_channel_session(
+                    channel_id,
+                    {"summary": summary, "recent": recent},
+                )
+            except Exception as error:
+                print(f"An error occurred saving chat memory: {error}")
         except Exception as error:
             print(f"An error occurred: {error}")
             await ctx.send("I'm tired of these childish requests.")

@@ -11,7 +11,7 @@ Mission and bounty administration accepts the common moderator role names `Moder
 ## 🚀 Features
 
 ### 🧠 AI-Driven Experiences
-- **AI Gamemaster:** Uses OpenAI and Gemini APIs to generate narrative-driven roleplaying scenes.
+- **AI Gamemaster:** Uses DeepSeek's OpenAI-compatible API to generate narrative-driven roleplaying scenes.
 - **AI Chatbot:** Intelligent character-based replies in designated IC (in-character) or OOC channels.
 - **AI Holo News Reports:** Scheduled galaxy-wide news broadcasts auto-generated and stylized in-universe.
 
@@ -35,7 +35,7 @@ Mission and bounty administration accepts the common moderator role names `Moder
 
 - **discord.py** (Hybrid & Application Commands)
 - **SQLAlchemy** (Missions, Users, Economy)
-- **OpenAI + Gemini API** (AI storytelling and chatbot)
+- **DeepSeek API** (`DEEPSEEK_API_KEY`, using the `deepseek-chat` model)
 - **UnbelievaBoat API** (Credit tracking and payouts)
 - **AsyncIO + Schedulers** (For timeouts and holo-news posting)
 - **Webhooks & Embeds** (RP display and formatting)

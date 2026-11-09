@@ -10,20 +10,22 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 import random
 import traceback
-import re
+from collections import defaultdict
 from typing import Literal
 from utils.utils import *
-from utils.gm_success_system import ACTION_EVALUATION_TOOL
+from utils.gm_success_system import ACTION_EVALUATION_TOOL, DIFFICULTY_DC, get_difficulty_guidance
 
 MAX_GM_RECENT = 25
 SUMMARIZE_GM_BATCH = 12
 
 VALID_DIFFICULTIES = Literal["easy", "medium", "hard", "extreme", "impossible", "realistic"]
 
-client = AsyncOpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com"
-)
+def get_deepseek_client():
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    return AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com") if api_key else None
+
+
+client = get_deepseek_client()
 
 # MODEL = "zai-org/GLM-4.7-TEE"
 # MODEL = "deepseek-ai/DeepSeek-V3.2-TEE"
@@ -341,6 +343,10 @@ def normalize_difficulty(difficulty: str) -> str:
 class GMCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # A turn holds this lock from session load through model generation
+        # and persistence.  This prevents overlapping webhook/prefix/slash
+        # turns from both reading the same history and losing one another.
+        self._channel_locks = defaultdict(asyncio.Lock)
 
     async def check_and_create_webhook(self, channel_id):
         try:
@@ -366,6 +372,52 @@ class GMCog(commands.Cog):
 
     def get_channel_key(self, channel):
         return channel.id
+
+    def get_channel_lock(self, channel_id):
+        return self._channel_locks[channel_id]
+
+    @staticmethod
+    def get_turn_message_ids(turn):
+        """Return only explicitly persisted Discord message IDs for a turn."""
+        if not isinstance(turn, dict):
+            return []
+
+        raw_ids = turn.get("message_ids", turn.get("discord_message_ids", []))
+        if not isinstance(raw_ids, (list, tuple)):
+            return []
+
+        message_ids = []
+        for raw_id in raw_ids:
+            try:
+                message_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if message_id > 0:
+                message_ids.append(message_id)
+        return message_ids
+
+    async def delete_turn_messages(self, channel, turn):
+        """Delete exactly the Discord messages recorded for a new GM turn.
+
+        A missing ID list means this is a legacy turn (or a turn whose send
+        could not be acknowledged), so no history scan or guessed deletion is
+        attempted.
+        """
+        message_ids = self.get_turn_message_ids(turn)
+        result = {"requested": len(message_ids), "deleted": 0, "missing": 0, "failed": 0}
+
+        for message_id in message_ids:
+            try:
+                message = await channel.fetch_message(message_id)
+                await message.delete()
+                result["deleted"] += 1
+            except discord.NotFound:
+                result["missing"] += 1
+            except Exception as error:
+                result["failed"] += 1
+                print(f"Could not delete recorded GM message {message_id}: {error}")
+
+        return result
 
     async def call_model(messages):
         for attempt in range(2):
@@ -402,12 +454,12 @@ class GMCog(commands.Cog):
         Start a gamemaster session with AI-driven storytelling.
 
         Difficulty levels:
-        - easy: 80% base success rate - Training scenarios, casual play
-        - medium: 60% base success rate - Standard adventures (DEFAULT)
-        - hard: 40% base success rate - Challenging missions, skilled enemies
-        - extreme: 20% base success rate - Elite opposition, high-stakes ops
-        - impossible: 5% base success rate - Legendary challenges, desperate odds
-        - realistic: 50% base, heavily modified - Pure simulation, no game balance
+        - easy: DC 10 (about 90% unmodified success) - Training scenarios, casual play
+        - medium: DC 20 (about 80% unmodified success) - Standard adventures (DEFAULT)
+        - hard: DC 35 (about 65% unmodified success) - Challenging missions, skilled enemies
+        - extreme: DC 40 (about 60% unmodified success) - Elite opposition, high-stakes ops
+        - impossible: DC 60 (about 40% unmodified success) - Legendary challenges, desperate odds
+        - realistic: DC 25 (about 75% unmodified success) - Pure simulation, no game balance
         """
         await interaction.response.defer()
         channel_key = self.get_channel_key(interaction.channel)
@@ -442,52 +494,67 @@ class GMCog(commands.Cog):
         except:
             pass
 
-        # Check if session already exists
-        active_sessions = load_rp_sessions()
+        difficulty_info = {
+            "easy": "🟢 Easy (DC 10)",
+            "medium": "🟡 Medium (DC 20)",
+            "hard": "🟠 Hard (DC 35)",
+            "extreme": "🔴 Extreme (DC 40)",
+            "impossible": "⚫ Impossible (DC 60)",
+            "realistic": "⚪ Realistic (DC 25)",
+        }
 
-        if channel_key not in active_sessions:
-            # Create new session
-            new_session = {
-                "scene_info": {
-                    "character": character,
-                    "location": location,
-                    "scenario": scenario,
-                    "difficulty": difficulty,  # Now guaranteed to be valid
-                    "multiplayer": multiplayer
-                },
-                "summary": "",
-                "recent": [],
-                "char_list": {}
-            }
+        # Serialize session creation with turns and stop so a simultaneous
+        # start cannot overwrite a turn or revive a stopped session.
+        async with self.get_channel_lock(channel_key):
+            active_sessions = load_rp_sessions()
 
-            save_session(channel_key, new_session)
+            if channel_key not in active_sessions:
+                new_session = {
+                    "scene_info": {
+                        "character": character,
+                        "location": location,
+                        "scenario": scenario,
+                        "difficulty": difficulty,
+                        "multiplayer": multiplayer
+                    },
+                    "summary": "",
+                    "recent": [],
+                    "char_list": {}
+                }
 
-            mode_message = "multiplayer mode" if multiplayer else "single player mode"
-            difficulty_message = difficulty_info.get(difficulty, difficulty)
+                save_session(channel_key, new_session)
 
-            await interaction.followup.send(
-                f"Gamemaster mode activated for this channel in {mode_message}!\n"
-                f"**Difficulty:** {difficulty_message}\n"
-                f"Now listening to messages. Remember to use '(' when talking out of RP.",
-                ephemeral=True
-            )
+                mode_message = "multiplayer mode" if multiplayer else "single player mode"
+                difficulty_message = difficulty_info.get(difficulty, difficulty)
 
-            # Manually trigger gamemaster_chat
-            await self.gamemaster_chat_core(interaction, author="Gamemaster",
-                                            msg="Set up the scene, environment, or situation for the player")
-        else:
-            await interaction.followup.send(
-                "A scenario is already in progress. Finish the current mission with /gamemaster_stop or change scenario location.",
-                ephemeral=True
-            )
+                await interaction.followup.send(
+                    f"Gamemaster mode activated for this channel in {mode_message}!\n"
+                    f"**Difficulty:** {difficulty_message}\n"
+                    f"Now listening to messages. Remember to use '(' when talking out of RP.",
+                    ephemeral=True
+                )
+
+                # Keep setup and its first turn in the same critical section.
+                await self._gamemaster_chat_core_locked(
+                    interaction,
+                    author="Gamemaster",
+                    msg="Set up the scene, environment, or situation for the player",
+                    channel=interaction.channel,
+                )
+            else:
+                await interaction.followup.send(
+                    "A scenario is already in progress. Finish the current mission with /gamemaster_stop or change scenario location.",
+                    ephemeral=True
+                )
 
     @commands.command(name="gamemaster_chat")
+    @commands.has_any_role("Game Master", "Trial Gamemaster")
     async def gamemaster_chat(self, ctx, author=None, msg=None, new_channel=None, new_channel_msg=None):
         await self.gamemaster_chat_core(ctx, author, msg, new_channel, new_channel_msg)
 
     async def gamemaster_chat_core(self, ctx_or_interaction, author=None, msg=None, new_channel=None,
                                    new_channel_msg=None):
-        """Updated to use OpenAI message format"""
+        """Run one serialized GM turn for the requested channel."""
         # Handle both Context and Interaction
         if isinstance(ctx_or_interaction, discord.Interaction):
             channel = ctx_or_interaction.channel if not new_channel else await self.bot.fetch_channel(new_channel)
@@ -499,6 +566,27 @@ class GMCog(commands.Cog):
                 await ctx_or_interaction.followup.send("❌ Could not access channel. Please try again.", ephemeral=True)
             else:
                 await ctx_or_interaction.send("❌ Could not access channel. Please try again.")
+            return
+
+        async with self.get_channel_lock(channel.id):
+            return await self._gamemaster_chat_core_locked(
+                ctx_or_interaction,
+                author=author,
+                msg=msg,
+                new_channel=new_channel,
+                new_channel_msg=new_channel_msg,
+                channel=channel,
+            )
+
+    async def _gamemaster_chat_core_locked(self, ctx_or_interaction, author=None, msg=None,
+                                           new_channel=None, new_channel_msg=None, channel=None):
+        """Execute a GM turn while the caller owns the channel lock."""
+        if channel is None:
+            if isinstance(ctx_or_interaction, discord.Interaction):
+                channel = ctx_or_interaction.channel if not new_channel else await self.bot.fetch_channel(new_channel)
+            else:
+                channel = await self.bot.fetch_channel(new_channel) if new_channel else ctx_or_interaction.channel
+        if not channel:
             return
 
         try:
@@ -579,6 +667,8 @@ class GMCog(commands.Cog):
                     return
 
                 combined_message = ""
+                turn_message_content = []
+                turn_message_ids = []
 
                 # --- send NPC turns ---
                 for char_turn in parsed_output:
@@ -591,6 +681,9 @@ class GMCog(commands.Cog):
 
                     if not character or not message:
                         continue
+
+                    turn_message_content.append(f"NPC: {character}, Message: {message}")
+                    combined_message = "\n".join(turn_message_content)
 
                     # avatar index mapping
                     if character not in char_list:
@@ -611,33 +704,42 @@ class GMCog(commands.Cog):
                     # Discord 2000-char handling
                     async def send_part(text):
                         if hasattr(channel, "parent") and channel.parent:
-                            await channel_webhook.send(
+                            return await channel_webhook.send(
                                 content=text,
                                 username=character,
                                 avatar_url=avatar_url,
-                                thread=channel
+                                thread=channel,
+                                wait=True,
                             )
                         else:
-                            await channel_webhook.send(
+                            return await channel_webhook.send(
                                 content=text,
                                 username=character,
-                                avatar_url=avatar_url
+                                avatar_url=avatar_url,
+                                wait=True,
                             )
 
                     if len(message) > 2000:
-                        await send_part(message[:2000])
+                        sent_message = await send_part(message[:2000])
+                        if sent_message is not None and getattr(sent_message, "id", None):
+                            turn_message_ids.append(sent_message.id)
                         await asyncio.sleep(1)
-                        await send_part(message[2000:])
+                        sent_message = await send_part(message[2000:])
+                        if sent_message is not None and getattr(sent_message, "id", None):
+                            turn_message_ids.append(sent_message.id)
                     else:
-                        await send_part(message)
-
-                    combined_message += f"NPC: {character}, Message: {message}\n"
+                        sent_message = await send_part(message)
+                        if sent_message is not None and getattr(sent_message, "id", None):
+                            turn_message_ids.append(sent_message.id)
 
                 # --- record model turn back to memory ---
-                recent.append({
+                assistant_turn = {
                     "role": "assistant",
                     "content": combined_message.strip()
-                })
+                }
+                if turn_message_ids:
+                    assistant_turn["message_ids"] = turn_message_ids
+                recent.append(assistant_turn)
 
                 # save session
                 save_session(
@@ -651,6 +753,32 @@ class GMCog(commands.Cog):
                 )
 
         except Exception as e:
+            # A webhook can acknowledge one chunk and fail on a later chunk.
+            # Preserve the visible IDs so undo/retry can clean up exactly
+            # what was sent, even though the turn did not finish normally.
+            if "turn_message_ids" in locals() and turn_message_ids and "recent" in locals():
+                partial_turn = locals().get("assistant_turn")
+                if partial_turn is None:
+                    partial_turn = {
+                        "role": "assistant",
+                        "content": combined_message.strip() if "combined_message" in locals() else "",
+                        "message_ids": list(turn_message_ids),
+                    }
+                if not recent or recent[-1] is not partial_turn:
+                    recent.append(partial_turn)
+                try:
+                    save_session(
+                        channel.id,
+                        {
+                            "scene_info": scene_info,
+                            "summary": summary,
+                            "recent": recent,
+                            "char_list": char_list,
+                        },
+                    )
+                except Exception as persist_error:
+                    print(f"Could not persist partial GM turn: {persist_error}")
+
             error_details = traceback.format_exc()
             print(f"GM ERROR Details: {error_details}")
 
@@ -994,20 +1122,22 @@ class GMCog(commands.Cog):
         channel_id = interaction.channel.id
 
         try:
-            rp_session = load_session(channel_id)
-            if not rp_session:
-                await interaction.followup.send("❌ There is no active game master session in this channel!",
-                                                ephemeral=True)
-                return
+            # Wait for any in-flight turn before deleting the session.  The
+            # same lock is held by chat_core through its final save, so a
+            # stopped session cannot be resurrected by an older turn.
+            async with self.get_channel_lock(channel_id):
+                rp_session = load_session(channel_id)
+                if not rp_session:
+                    await interaction.followup.send("❌ There is no active game master session in this channel!",
+                                                    ephemeral=True)
+                    return
 
-            # Clean up session file
-            session_file = f"sessions/{channel_id}.json"
-            if os.path.exists(session_file):
-                os.remove(session_file)
-                print(f"Deleted session file: {session_file}")
+                if delete_session(channel_id):
+                    print(f"Deleted session file: sessions/{channel_id}.json")
 
-            # Generate summary and news story in single API call
-            await self._generate_session_summary_and_news(interaction, rp_session)
+                # Generate summary and news story in single API call while
+                # the channel is still quiescent.
+                await self._generate_session_summary_and_news(interaction, rp_session)
             await interaction.followup.send("✅ Gamemaster for this channel has been stopped successfully.",
                                             ephemeral=True)
 
@@ -1019,7 +1149,7 @@ class GMCog(commands.Cog):
             try:
                 session_file = f"sessions/{channel_id}.json"
                 if os.path.exists(session_file):
-                    os.remove(session_file)
+                    delete_session(channel_id)
                     await interaction.followup.send(f"✅ Session cleared despite error: {str(e)[:100]}", ephemeral=True)
                 else:
                     await interaction.followup.send(f"❌ Error occurred, no session was active: {str(e)[:100]}",
@@ -1145,25 +1275,31 @@ class GMCog(commands.Cog):
     async def _save_news_story(self, story_idea):
         """Save news story to pickle file"""
         try:
-            news_pickle_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "news.pkl")
-
-            try:
-                with open(news_pickle_file, 'rb') as f:
-                    news_data = pickle.load(f)
-            except (FileNotFoundError, EOFError):
-                news_data = []
-
-            news_data.append({
+            story_data = {
                 "headline": "",
                 "report": "",
                 "story_type": "story_idea",
                 "original_idea": story_idea,
                 "author": "GameMaster Bot",
                 "timestamp": datetime.now().isoformat()
-            })
+            }
 
-            with open(news_pickle_file, 'wb') as f:
-                pickle.dump(news_data, f)
+            # Reuse NewsCog's lock and atomic writer when it is loaded. This
+            # prevents a session stop from racing the scheduled publisher.
+            news_cog = self.bot.get_cog("NewsCog") if self.bot else None
+            if news_cog is not None:
+                await news_cog._add_to_pickle(story_data)
+            else:
+                news_pickle_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "news.pkl")
+                os.makedirs(os.path.dirname(news_pickle_file), exist_ok=True)
+                try:
+                    with open(news_pickle_file, 'rb') as f:
+                        news_data = pickle.load(f)
+                except (FileNotFoundError, EOFError):
+                    news_data = []
+                news_data.append(story_data)
+                with open(news_pickle_file, 'wb') as f:
+                    pickle.dump(news_data, f)
 
             print(f"Added news story idea: {story_idea}")
 
@@ -1256,18 +1392,10 @@ class GMCog(commands.Cog):
             return
 
         try:
-            # Remove the last GM response and extract NPC names
+            # Remove the last GM response. New turns carry the exact Discord
+            # message IDs they created, so retry never guesses by NPC name.
             removed_response = recent.pop(last_model_index)
             print(f"Removed GM response at index {last_model_index}")
-
-            # Extract NPC names from the removed response
-            npc_names = set()
-            response_text = removed_response.get("content", "")
-            npc_pattern = r'NPC:\s*([^,]+),\s*Message:'
-            matches = re.findall(npc_pattern, response_text)
-            for match in matches:
-                npc_names.add(match.strip())
-            print(f"Found NPC names: {npc_names}")
 
             # Add corrective context if provided
             if context:
@@ -1282,45 +1410,8 @@ class GMCog(commands.Cog):
             rp_session["recent"] = recent
             save_session(channel_id, rp_session)
 
-            # Delete webhook messages (same logic as before)
-            webhook_channel = interaction.channel
-            if hasattr(interaction.channel, 'parent') and interaction.channel.parent:
-                webhook_channel = interaction.channel.parent
-
-            try:
-                channel_webhook = await self.check_and_create_webhook(webhook_channel.id)
-                webhook_id = channel_webhook.id if channel_webhook else None
-            except:
-                webhook_id = None
-
-            deleted_count = 0
-            remaining_npc_names = npc_names.copy()
-            max_deletions = len(npc_names) * 2
-
-            if npc_names and webhook_id:
-                try:
-                    async for message in interaction.channel.history(limit=100):
-                        if deleted_count >= max_deletions or not remaining_npc_names:
-                            break
-
-                        if (message.webhook_id == webhook_id and
-                                message.author.bot and
-                                message.author.discriminator == "0000" and
-                                message.author.display_name in remaining_npc_names):
-                            try:
-                                await message.delete()
-                                deleted_count += 1
-                                print(f"Deleted message from {message.author.display_name}")
-
-                                if deleted_count >= len(npc_names):
-                                    remaining_npc_names.discard(message.author.display_name)
-                            except Exception as msg_delete_error:
-                                print(f"Could not delete message {message.id}: {msg_delete_error}")
-                except Exception as delete_error:
-                    print(f"Warning: Could not delete webhook messages: {delete_error}")
-
-            if deleted_count > 0:
-                print(f"Deleted {deleted_count} previous GM webhook messages")
+            deletion_result = await self.delete_turn_messages(interaction.channel, removed_response)
+            print(f"Retry deleted recorded GM messages: {deletion_result}")
 
             status_msg = "🔄 Retrying the latest gamemaster turn"
             if context:
@@ -1346,6 +1437,7 @@ class GMCog(commands.Cog):
             await interaction.followup.send(f"❌ Retry failed: {str(e)[:100]}", ephemeral=True)
 
     @app_commands.command(name="gamemaster_continue", description="Have the bot continue with another GM Message")
+    @app_commands.checks.has_any_role("Game Master", "Trial Gamemaster")
     async def gamemaster_continue(self, interaction: discord.Interaction):
         channel_id = interaction.channel.id
         await interaction.response.send_message("🔃 Continuing...", ephemeral=True)
@@ -1515,15 +1607,8 @@ class GMCog(commands.Cog):
                 rp_session["recent"] = recent
                 save_session(channel_id, rp_session)
 
-                # Extract NPC names and delete messages (same logic as retry)
-                npc_names = set()
-                response_text = removed.get("content", "")
-                npc_pattern = r'NPC:\s*([^,]+),\s*Message:'
-                matches = re.findall(npc_pattern, response_text)
-                for match in matches:
-                    npc_names.add(match.strip())
-
-                # ... (rest of deletion logic same as retry)
+                deletion_result = await self.delete_turn_messages(interaction.channel, removed)
+                print(f"Undo deleted recorded GM messages: {deletion_result}")
 
                 await interaction.followup.send("✅ Last gamemaster response undone.", ephemeral=True)
                 return
@@ -1710,12 +1795,12 @@ class GMCog(commands.Cog):
 
             # Difficulty descriptions
             difficulty_info = {
-                "easy": ("🟢 Easy", "80% base success rate - Training scenarios, casual play"),
-                "medium": ("🟡 Medium", "60% base success rate - Standard adventures"),
-                "hard": ("🟠 Hard", "40% base success rate - Challenging missions"),
-                "extreme": ("🔴 Extreme", "20% base success rate - Elite opposition"),
-                "impossible": ("⚫ Impossible", "5% base success rate - Legendary challenges"),
-                "realistic": ("⚪ Realistic", "50% base, heavily modified - Pure simulation")
+                "easy": ("🟢 Easy", "DC 10 • About 90% unmodified success - Training scenarios, casual play"),
+                "medium": ("🟡 Medium", "DC 20 • About 80% unmodified success - Standard adventures"),
+                "hard": ("🟠 Hard", "DC 35 • About 65% unmodified success - Challenging missions"),
+                "extreme": ("🔴 Extreme", "DC 40 • About 60% unmodified success - Elite opposition"),
+                "impossible": ("⚫ Impossible", "DC 60 • About 40% unmodified success - Legendary challenges"),
+                "realistic": ("⚪ Realistic", "DC 25 • About 75% unmodified success - Pure simulation")
             }
 
             old_emoji, old_desc = difficulty_info.get(old_difficulty, (old_difficulty, "Unknown"))
@@ -1789,37 +1874,37 @@ class GMCog(commands.Cog):
 
             embed.add_field(
                 name="🟢 Easy",
-                value="**80% base success rate**\nTraining scenarios, casual play, learning the ropes\n*Example: Sneaking past distracted guards*",
+                value="**DC 10 • About 90% unmodified success**\nTraining scenarios, casual play, learning the ropes\n*Example: Sneaking past distracted guards*",
                 inline=False
             )
 
             embed.add_field(
                 name="🟡 Medium (Default)",
-                value="**60% base success rate**\nStandard adventures, balanced challenge\n*Example: Combat with trained Stormtroopers*",
+                value="**DC 20 • About 80% unmodified success**\nStandard adventures, balanced challenge\n*Example: Combat with trained Stormtroopers*",
                 inline=False
             )
 
             embed.add_field(
                 name="🟠 Hard",
-                value="**40% base success rate**\nChallenging missions, skilled enemies, requires planning\n*Example: Infiltrating Imperial facility*",
+                value="**DC 35 • About 65% unmodified success**\nChallenging missions, skilled enemies, requires planning\n*Example: Infiltrating Imperial facility*",
                 inline=False
             )
 
             embed.add_field(
                 name="🔴 Extreme",
-                value="**20% base success rate**\nElite opposition, high-stakes operations, excellent planning required\n*Example: Fighting Death Troopers*",
+                value="**DC 40 • About 60% unmodified success**\nElite opposition, high-stakes operations, excellent planning required\n*Example: Fighting Death Troopers*",
                 inline=False
             )
 
             embed.add_field(
                 name="⚫ Impossible",
-                value="**5% base success rate**\nLegendary challenges, desperate odds, near-certain failure\n*Example: Stealing a Star Destroyer*",
+                value="**DC 60 • About 40% unmodified success**\nLegendary challenges, desperate odds, near-certain failure\n*Example: Stealing a Star Destroyer*",
                 inline=False
             )
 
             embed.add_field(
                 name="⚪ Realistic",
-                value="**50% base, heavily modified**\nPure simulation, no game balance, outcomes based on logic and physics\n*Example: Pure Star Wars lore simulation*",
+                value="**DC 25 • About 75% unmodified success**\nPure simulation, outcomes based on logic and physics\n*Example: Pure Star Wars lore simulation*",
                 inline=False
             )
 
@@ -1848,12 +1933,12 @@ class GMCog(commands.Cog):
         multiplayer = scene_info.get('multiplayer', False)
 
         difficulty_info = {
-            "easy": ("🟢 Easy", "80% base success", discord.Color.green()),
-            "medium": ("🟡 Medium", "60% base success", discord.Color.gold()),
-            "hard": ("🟠 Hard", "40% base success", discord.Color.orange()),
-            "extreme": ("🔴 Extreme", "20% base success", discord.Color.red()),
-            "impossible": ("⚫ Impossible", "5% base success", discord.Color.from_rgb(50, 50, 50)),
-            "realistic": ("⚪ Realistic", "Pure simulation", discord.Color.from_rgb(200, 200, 200))
+            "easy": ("🟢 Easy", "DC 10 • About 90% unmodified success", discord.Color.green()),
+            "medium": ("🟡 Medium", "DC 20 • About 80% unmodified success", discord.Color.gold()),
+            "hard": ("🟠 Hard", "DC 35 • About 65% unmodified success", discord.Color.orange()),
+            "extreme": ("🔴 Extreme", "DC 40 • About 60% unmodified success", discord.Color.red()),
+            "impossible": ("⚫ Impossible", "DC 60 • About 40% unmodified success", discord.Color.from_rgb(50, 50, 50)),
+            "realistic": ("⚪ Realistic", "DC 25 • About 75% unmodified success", discord.Color.from_rgb(200, 200, 200))
         }
 
         emoji, desc, color = difficulty_info.get(difficulty, (difficulty, "Unknown", discord.Color.blue()))
@@ -1912,12 +1997,12 @@ class GMCog(commands.Cog):
     def get_difficulty_emoji_and_desc(difficulty: str) -> tuple[str, str]:
         """Get emoji and description for a difficulty level"""
         difficulty_map = {
-            "easy": ("🟢", "80% base success - Training scenarios"),
-            "medium": ("🟡", "60% base success - Standard challenge"),
-            "hard": ("🟠", "40% base success - Serious opposition"),
-            "extreme": ("🔴", "20% base success - Elite difficulty"),
-            "impossible": ("⚫", "5% base success - Legendary challenge"),
-            "realistic": ("⚪", "50% base, pure simulation")
+            "easy": ("🟢", "DC 10 • About 90% unmodified success - Training scenarios"),
+            "medium": ("🟡", "DC 20 • About 80% unmodified success - Standard challenge"),
+            "hard": ("🟠", "DC 35 • About 65% unmodified success - Serious opposition"),
+            "extreme": ("🔴", "DC 40 • About 60% unmodified success - Elite difficulty"),
+            "impossible": ("⚫", "DC 60 • About 40% unmodified success - Legendary challenge"),
+            "realistic": ("⚪", "DC 25 • About 75% unmodified success - Pure simulation")
         }
         return difficulty_map.get(difficulty.lower(), ("❓", "Unknown difficulty"))
 

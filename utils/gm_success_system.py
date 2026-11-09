@@ -48,12 +48,12 @@ class OutcomeGuidance(BaseModel):
 
 # Difficulty to base DC mapping
 DIFFICULTY_DC = {
-    "easy":       10,   # was 20 — trivial tasks still occasionally fail
-    "medium":     20,   # was 40 — standard play feels achievable
-    "hard":       35,   # was 60 — requires planning, not a coin flip
-    "extreme":    40,   # was 80 — tough but not hopeless
-    "impossible": 60,   # was 95 — actually possible with brilliance
-    "realistic":  25,   # was 50 — slightly more forgiving baseline
+    "easy":       10,
+    "medium":     20,
+    "hard":       35,
+    "extreme":    40,
+    "impossible": 60,
+    "realistic":  25,
 }
 
 def evaluate_cleverness(action_desc: str, preparation: str, equipment: list[str]) -> tuple[int, str]:
@@ -243,8 +243,8 @@ DIFFICULTY_EXAMPLES = {
             "Intimidating a frightened civilian",
             "Hot-wiring a civilian speeder with proper tools"
         ],
-        "typical_dc": 20,
-        "notes": "Even with no bonuses, 80% chance of success"
+        "typical_dc": 10,
+        "notes": "About 90% unmodified success chance"
     },
     
     "medium": {
@@ -254,8 +254,8 @@ DIFFICULTY_EXAMPLES = {
             "Convincing a skeptical but reasonable person",
             "Picking a standard lock without perfect tools"
         ],
-        "typical_dc": 40,
-        "notes": "60% base chance; player decisions matter significantly"
+        "typical_dc": 20,
+        "notes": "About 80% unmodified success chance; player decisions matter significantly"
     },
     
     "hard": {
@@ -265,8 +265,8 @@ DIFFICULTY_EXAMPLES = {
             "Slicing into an Imperial security terminal",
             "Sneaking past alert guards"
         ],
-        "typical_dc": 60,
-        "notes": "40% base chance; good planning essential. Enemies fight smarter, not with better gear."
+        "typical_dc": 35,
+        "notes": "About 65% unmodified success chance; good planning essential. Enemies fight smarter, not with better gear."
     },
 
     "extreme": {
@@ -276,8 +276,8 @@ DIFFICULTY_EXAMPLES = {
             "Infiltrating an ISB facility with active patrols and surveillance",
             "Convincing an Imperial officer to commit treason"
         ],
-        "typical_dc": 80,
-        "notes": "20% base chance; requires significant bonuses from clever planning. Enemies use superior numbers and tactics — not invented prototype equipment."
+        "typical_dc": 40,
+        "notes": "About 60% unmodified success chance; requires significant bonuses from clever planning. Enemies use superior numbers and tactics — not invented prototype equipment."
     },
 
     "impossible": {
@@ -287,8 +287,8 @@ DIFFICULTY_EXAMPLES = {
             "Single-handedly defeating a platoon",
             "Slicing the Imperial central database"
         ],
-        "typical_dc": 95,
-        "notes": "5% base chance; even with bonuses, should remain very difficult"
+        "typical_dc": 60,
+        "notes": "About 40% unmodified success chance; even with bonuses, should remain very difficult"
     },
 
     "realistic": {
@@ -297,8 +297,8 @@ DIFFICULTY_EXAMPLES = {
             "Any action evaluated purely on its logical merits",
             "Used when the GM wants outcomes based on world physics, not game balance"
         ],
-        "typical_dc": 50,
-        "notes": "Baseline 50% chance, heavily modified by circumstances and logic"
+        "typical_dc": 25,
+        "notes": "About 75% unmodified chance; heavily modified by circumstances and logic"
     }
 }
 
